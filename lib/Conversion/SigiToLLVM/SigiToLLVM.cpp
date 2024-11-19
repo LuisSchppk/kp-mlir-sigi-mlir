@@ -45,11 +45,6 @@ static LLVM::LLVMPointerType ptrType(Type ty)
     return LLVM::LLVMPointerType::get(ty.getContext());
 }
 
-static LLVM::LLVMPointerType untypedPtrType(MLIRContext* ctx)
-{
-    return LLVM::LLVMPointerType::get(ctx);
-}
-
 static LLVM::LLVMPointerType llvmStackStructType(MLIRContext* ctx)
 {
     // Opaque Struct instead of simply identified -> Body should not be changed.
@@ -147,9 +142,9 @@ struct ConvertSigiPopOpToLLVM : public ConvertOpToLLVMPattern<sigi::PopOp> {
 
         ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
 
-        // Error might lie here? op.getElement is not yet converted -> for push
+        // Error might lie here? op.getValue is not yet converted -> for push
         // i can use adaptor, but here not
-        auto valueType = op.getElement().getType();
+        auto valueType = op.getValue().getType();
         LLVM::LLVMFuncOp pop;
         if (valueType.isInteger(1)) {
             pop = getSigiPopBool(moduleOp);
@@ -191,7 +186,7 @@ struct ConvertSigiPushOpToLLVM : public ConvertOpToLLVMPattern<sigi::PushOp> {
     {
 
         ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
-        auto valueType = adaptor.getElement().getType();
+        auto valueType = adaptor.getValue().getType();
         LLVM::LLVMFuncOp push;
         if (valueType.isInteger(1)) {
             push = getSigiPushBool(moduleOp);
@@ -201,12 +196,7 @@ struct ConvertSigiPushOpToLLVM : public ConvertOpToLLVMPattern<sigi::PushOp> {
             llvm::isa<closure::BoxedClosureType>(valueType)
             || llvm::isa<LLVM::LLVMPointerType>(valueType)) {
 
-            // no match -> maybe error in verifier?
             push = getSigiPushClosure(moduleOp, valueType);
-
-            // match but wrong parameter(type) for c_func call?
-            // push = getSigiPushClosure(moduleOp,
-            // getTypeConverter()->convertType(valueType));
         } else {
             return rewriter.notifyMatchFailure(
                 op->getLoc(),
@@ -341,90 +331,6 @@ struct ConvertSigiToLLVMPass
     void runOnOperation() final;
 };
 
-void sigiAttributeWalk(auto op, MLIRContext* context)
-{
-    op->walk([&](LLVM::LLVMFuncOp op) {
-        ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
-        PatternRewriter rewriter(context);
-        if (op->hasAttr("sigi.main")) {
-            // LLVM_DEBUG(llvm::errs() <<"Found Main Operation: " << op <<
-            // "\n");
-            auto initStack = getSigiInitStack(moduleOp);
-            auto freeStack = getSigiFreeStack(moduleOp);
-            auto mallocSignature =
-                LLVM::lookupOrCreateMallocFn(moduleOp, rewriter.getI64Type());
-            rewriter.setInsertionPointToEnd(moduleOp.getBody());
-            auto newMainFunc = rewriter.create<LLVM::LLVMFuncOp>(
-                op->getLoc(),
-                "main",
-                LLVM::LLVMFunctionType::get(
-                    LLVM::LLVMVoidType::get(context),
-                    {}));
-            rewriter.createBlock(&newMainFunc.getBody());
-            rewriter.setInsertionPointToStart(
-                &newMainFunc->getRegion(0).front());
-            auto size = rewriter.create<LLVM::ConstantOp>(
-                op.getLoc(),
-                rewriter.getI64Type(),
-                128);
-            auto c_malloc = rewriter.create<LLVM::CallOp>(
-                op.getLoc(),
-                mallocSignature,
-                size.getResult());
-            rewriter.create<LLVM::CallOp>(
-                op.getLoc(),
-                initStack,
-                c_malloc.getResult());
-            auto castToLLVMStruct = rewriter.create<LLVM::BitcastOp>(
-                op.getLoc(),
-                llvmStackStructType(context),
-                c_malloc.getResult());
-            rewriter.create<LLVM::CallOp>(
-                op.getLoc(),
-                op,
-                castToLLVMStruct.getResult());
-            rewriter.create<LLVM::CallOp>(
-                op.getLoc(),
-                freeStack,
-                c_malloc.getResult());
-            rewriter.create<LLVM::ReturnOp>(op.getLoc(), ValueRange{});
-            rewriter.modifyOpInPlace(op, [&]() {
-                op->removeAttr("sigi.main");
-            });
-        } else if (
-            op->hasAttr("sigi.builtinfunc") && op.getName() == "sigi::pp") {
-            LLVM_DEBUG(llvm::errs() << "Found sigi::pp: " << op << "\n");
-            LLVM_DEBUG(
-                llvm::errs()
-                << "Argument Types: " << op.getArgumentTypes()[0] << "\n");
-
-            LLVM::LLVMFuncOp builtin_signature = LLVM::lookupOrCreateFn(
-                moduleOp,
-                "sigi_builtin__pp",
-                LLVM::LLVMPointerType::get(context),
-                LLVM::LLVMPointerType::get(context));
-
-            LLVM_DEBUG(
-                llvm::errs()
-                << "Build c signature: " << builtin_signature << "\n");
-            rewriter.startOpModification(op);
-            if (llvm::failed(op.replaceAllSymbolUses(
-                    rewriter.getStringAttr("sigi_builtin__pp"),
-                    moduleOp))) {
-
-                LLVM_DEBUG(llvm::errs() << "Failure.");
-                rewriter.cancelOpModification(op);
-            } else {
-                op.setSymName("sigi_builtin_pp");
-                op->removeAttr("sigi.builtinfunc");
-                rewriter.finalizeOpModification(op);
-                LLVM_DEBUG(llvm::errs() << "Success.");
-            }
-            LLVM_DEBUG(llvm::errs() << "Result: " << moduleOp->getBlock());
-        }
-    });
-}
-
 void ConvertSigiToLLVMPass::runOnOperation()
 {
     LLVMTypeConverter converter(&getContext());
@@ -466,10 +372,7 @@ void ConvertSigiToLLVMPass::runOnOperation()
     mlir::populateFuncToLLVMConversionPatterns(converter, patterns);
 
     target.markUnknownOpDynamicallyLegal([](Operation*) { return true; });
-
-    // auto op = getOperation();
-    // sigiAttributeWalk(op, &getContext());
-
+    
     // make sure our rewrite pattern is applied -> from Clemént's solution
     target.addDynamicallyLegalOp<LLVM::LLVMFuncOp>([&](LLVM::LLVMFuncOp op) {
         return !op->hasAttr("sigi.main") && !op->hasAttr("sigi.builtinfunc")

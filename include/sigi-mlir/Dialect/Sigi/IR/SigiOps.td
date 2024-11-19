@@ -31,22 +31,24 @@ def PopOp : Sigi_Op<"pop", [Pure]> {
     let description  = "";
     let arguments = (ins Sigi_StackType:$in_stack);
 
-    // check that element has correct type in verifier ?
-    let results = (outs Sigi_StackType:$out_stack, AnyType:$element);
-    let assemblyFormat = "$in_stack attr-dict `:` type($element)";
+    // check that value has correct type in verifier ?
+    let results = (outs Sigi_StackType:$out_stack, AnyType:$value);
+    let assemblyFormat = "$in_stack attr-dict `:` type($value)";
     let hasVerifier=1;
+    let hasCanonicalizeMethod = 1;
     // let hasCustomAssemblyFormat = 1;
 }
 
 def PushOp : Sigi_Op<"push", [Pure]> {
-    let summary = "123";
+    let summary = "";
     let description  = "";
-    let arguments = (ins Sigi_StackType:$in_stack, AnyType:$element);
+    let arguments = (ins Sigi_StackType:$in_stack, AnyType:$value);
 
-    // check that element has correct type in verifier ? 
+    // check that value has correct type in verifier ? 
     let results = (outs Sigi_StackType:$out_stack);
-    let assemblyFormat = "$in_stack `,` $element attr-dict `:` type($element)";
+    let assemblyFormat = "$in_stack `,` $value attr-dict `:` type($value)";
     let hasVerifier=1;
+    let hasCanonicalizeMethod = 1;
     // let hasCustomAssemblyFormat = 1; 
 }
 
