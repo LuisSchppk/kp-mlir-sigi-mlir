@@ -1,1 +1,2 @@
 add_subdirectory(ClosureToLLVM)
+add_subdirectory(SigiToLLVM)

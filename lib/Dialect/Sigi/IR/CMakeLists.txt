@@ -8,6 +8,7 @@ add_mlir_dialect_library(SigiIR
         SigiConversionPassIncGen
 
     LINK_LIBS PUBLIC
+        ClosureIR
         MLIRIR
         MLIRParser
         MLIRSideEffectInterfaces

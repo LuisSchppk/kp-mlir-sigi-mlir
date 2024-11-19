@@ -31,7 +31,7 @@ def Sigi_Dialect : Dialect {
 }
 
 // Template for attributes.
- class Sigi_Attr<string name, list<Trait> traits = []>
+class Sigi_Attr<string name, list<Trait> traits = []>
          : AttrDef<Sigi_Dialect, name, traits>;
 // Template for ops.
 class Sigi_Op<string mnemonic, list<Trait> traits = []>

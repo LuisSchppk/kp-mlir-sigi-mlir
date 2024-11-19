@@ -6,7 +6,7 @@
 set dotenv-load := true
 
 llvm_prefix := env_var("LLVM_BUILD_DIR")
-build_type := env_var_or_default("LLVM_BUILD_TYPE", "RelWithDebInfo")
+build_type := env_var_or_default("LLVM_BUILD_TYPE", "Debug")
 build_dir := "build"
 
 # execute cmake -- this is only needed on the first build
@@ -17,10 +17,10 @@ cmake:
         -DLLVM_DIR={{llvm_prefix}}/lib/cmake/llvm \
         -DMLIR_DIR={{llvm_prefix}}/lib/cmake/mlir \
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-        -DCMAKE_C_COMPILER=clang \
-        -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_C_COMPILER=clang-14 \
+        -DCMAKE_CXX_COMPILER=clang++-14 \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-        -DCMAKE_LINKER="/bin/ld.lld"
+        -DCMAKE_LINKER_TYPE="MOLD"
 
 # execute a specific ninja target
 doNinja *ARGS:
@@ -63,14 +63,14 @@ llvmDialectIntoExecutable FILE:
     {{llvm_prefix}}/bin/mlir-translate -mlir-to-llvmir {{FILE}} > ${FILEBASE}.ll
     # creates {{FILE}}.s
     {{llvm_prefix}}/bin/llc -O0 ${FILEBASE}.ll
-    clang -fuse-ld=lld -L{{build_dir}}/lib -lSigiRuntime ${FILEBASE}.s -g -o ${FILEBASE}.exe -no-pie
+    clang-14 -fuse-ld=lld -L{{build_dir}}/lib -lSigiRuntime ${FILEBASE}.s -g -o ${FILEBASE}.exe -no-pie
 
 # Lowers Sigi all the way to LLVM IR. Temporary files are left there.
 sigiToLlvmIr FILE:
     #!/bin/bash
     FILEBASE={{FILE}}
     FILEBASE=${FILEBASE%.*}
-    {{build_dir}}/bin/sigi-opt --closure-inline --inline --sigi-insert-drop-checks --convert-arith-to-llvm --convert-scf-to-cf --convert-sigi-to-llvm -cse --llvm-legalize-for-export --mlir-print-ir-after-failure --mlir-print-stacktrace-on-diagnostic {{FILE}} > $FILEBASE.llvm.mlir
+    {{build_dir}}/bin/sigi-opt --convert-arith-to-llvm --convert-scf-to-cf --convert-sigi-to-llvm -cse --llvm-legalize-for-export --mlir-print-ir-after-failure --mlir-print-stacktrace-on-diagnostic {{FILE}} > $FILEBASE.llvm.mlir
     just llvmDialectIntoExecutable $FILEBASE.llvm.mlir
 
 # Lowers closure all the way to LLVM IR. Temporary files are left there.
@@ -87,7 +87,7 @@ closureToLlvmIrOpt FILE:
     {{llvm_prefix}}/bin/opt -O3 -S {{FILE}}.ll | tee {{FILE}}.opt.ll
     # creates {{FILE}}.s
     {{llvm_prefix}}/bin/llc -O0 {{FILE}}.opt.ll
-    clang -fuse-ld=lld {{FILE}}.s -g -o {{FILE}}.exe -no-pie
+    clang-14 -fuse-ld=lld {{FILE}}.s -g -o {{FILE}}.exe -no-pie
     
 
 addNewDialect DIALECT_NAME DIALECT_NS:
@@ -95,5 +95,5 @@ addNewDialect DIALECT_NAME DIALECT_NS:
 
 compileRuntime: (doNinja "SigiRuntime")
 runRuntimeTest: compileRuntime
-    clang sandbox/runtimeTest.c -g -o sandbox/runtimeTest
+    clang-14 sandbox/runtimeTest.c -g -o sandbox/runtimeTest
     ./sandbox/runtimeTest

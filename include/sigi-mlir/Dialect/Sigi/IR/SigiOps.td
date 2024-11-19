@@ -20,10 +20,34 @@ include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/IR/BuiltinTypes.td"
 
 
 // These ops are pure because they consume a stack and return a new one.
 // The implementation is not pure though.
 
+def PopOp : Sigi_Op<"pop", [Pure]> {
+    let summary = "";
+    let description  = "";
+    let arguments = (ins Sigi_StackType:$in_stack);
+
+    // check that element has correct type in verifier ?
+    let results = (outs Sigi_StackType:$out_stack, AnyType:$element);
+    let assemblyFormat = "$in_stack attr-dict `:` type($element)";
+    let hasVerifier=1;
+    // let hasCustomAssemblyFormat = 1;
+}
+
+def PushOp : Sigi_Op<"push", [Pure]> {
+    let summary = "123";
+    let description  = "";
+    let arguments = (ins Sigi_StackType:$in_stack, AnyType:$element);
+
+    // check that element has correct type in verifier ? 
+    let results = (outs Sigi_StackType:$out_stack);
+    let assemblyFormat = "$in_stack `,` $element attr-dict `:` type($element)";
+    let hasVerifier=1;
+    // let hasCustomAssemblyFormat = 1; 
+}
 
 #endif

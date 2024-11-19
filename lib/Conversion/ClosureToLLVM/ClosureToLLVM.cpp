@@ -561,7 +561,7 @@ void mlir::closure::populateClosureToLLVMFinalTypeConversions(
                 false,
                 true,
                 conversion);
-
+                
             if (llvmTy)
                 // means the function type is convertible to LLVM
                 return ptrType(ptrType(insertClosureParameter(
