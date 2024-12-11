@@ -69,7 +69,7 @@ LogicalResult PushOp::verify()
 
 LogicalResult PopOp::canonicalize(PopOp op, ::mlir::PatternRewriter &rewriter)
 {
-    LLVM_DEBUG(llvm::errs() << "Entered Pop caninucalization. \n");
+    LLVM_DEBUG(llvm::errs() << "Entered Pop canonicalization. \n");
     auto in = op.getInStack();
     auto definingOp = in.getDefiningOp();
     if (definingOp == nullptr) {
@@ -87,8 +87,8 @@ LogicalResult PopOp::canonicalize(PopOp op, ::mlir::PatternRewriter &rewriter)
     return llvm::failure();
 }
 
-LogicalResult PushOp::canonicalize(PushOp op, ::mlir::PatternRewriter &rewriter)
-{
+// LogicalResult PushOp::canonicalize(PushOp op, ::mlir::PatternRewriter &rewriter)
+// {
 
-    return llvm::success();
-}
+//     return llvm::success();
+// }

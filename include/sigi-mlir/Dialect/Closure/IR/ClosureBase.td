@@ -26,6 +26,7 @@ def Closure_Dialect : Dialect {
     private:
         void registerOps();
         void registerTypes();
+        void getCanonicalizationPatterns(RewritePatternSet &result) const override;
     }];
 }
 
