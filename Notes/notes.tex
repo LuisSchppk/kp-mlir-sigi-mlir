@@ -1,0 +1,111 @@
+\documentclass{article}
+\usepackage{algpseudocode}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\normalsize
+\bibliographystyle{ieeetr} 
+
+\lstset{
+  basicstyle=\ttfamily,
+  keywordstyle=\bfseries\color{blue},
+  stringstyle=\color{teal},
+  commentstyle=\itshape\color{gray},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  escapeinside={(*@}{@*)} % To allow LaTeX commands inside listings
+}
+%(*@ @*)
+
+
+
+
+\begin{document}
+\newtheorem{definition}{Definition}[section]
+\tableofcontents
+
+
+
+\section{Notation}
+\begin{itemize}
+    \item \texttt{[...]} sequence of zero or more elements. 
+\end{itemize}
+
+\section{Definition}
+\begin{definition}[Tail Recursive Call]
+A call from procedure f ( ) to procedure g( ) is a tail call if the only thing
+f ( ) does, after g( ) returns to it, is itself return. The call is tail-recursive if f ( )
+and g( ) are the same procedure.\cite{10.5555/286076}
+\newline
+Adaption for our purpose:\newline
+Still tail recursive call, while nested operations with regions or blocks return. i.e. 
+Operations with OpTrait ReturnLike and IsTerminator.
+
+\end{definition}
+
+\section{Limitations/ Assumptions}
+\begin{enumerate}
+    \item Controlflow only sequential(line after line) or through the scf-Dialect. So no cf/ llvm jumps / arith select(? might be possible to allow arith select. as we still have to have a topMostIf)
+    \item Recursive call nested within a scf::ifOp. By (1.) If recursive call is not nested within scf::ifOp Recursion would never terminate.  WRONG: What about while and for?
+    \item func.func is tail recursive and valid MLIR
+    \item Set of allowed dialects for Operations is arith, scf, sigi, (\textcolor{red}{closure, func})
+\end{enumerate}
+
+\section{Tail Recursion Elimination Algorithm}
+\subsection[short]{Inputs}
+
+Input to the Algorithm: \newline 
+\subsubsection{funcOp}
+ Operation of type \texttt{func::funcOp} and the form:
+\begin{lstlisting}
+    func.func @sym_name (%arg_i | i in {1...n}; type in {i32, i1, sigi.stack})
+                -> [(*@\textit{resultstypes;  have same type as args}@*)]
+    1. [Operation |in allowed Dialects] (*@\textit{ = PROTO\textunderscore HEAD}@*)
+    2. scf::ifOp %cond -> (*@\textit{? | = resultstypes guranteed?}@*) {
+            (*@\textit{THENBODY}@*)
+        } else {
+            (*@\textit{ELSEBODY}@*)
+        }
+    3. func.return %result: (*@\textit{resulttypes}@*)
+\end{lstlisting}
+Where either \newline 
+\texttt{\textit{THENBODY}} = \texttt{\textit{PROTO\textunderscore WHILEBODY}} 
+and \texttt{\textit{THENBODY}} = \texttt{\textit{PROTO\textunderscore TERMINATION}} \newline  or 
+\texttt{\textit{THENBODY}} = \texttt{\textit{PROTO\textunderscore TERMINATION}}
+and \texttt{\textit{THENBODY}} = \texttt{\textit{PROTO\textunderscore WHILEBODY}}. \newline
+
+With \texttt{\textit{PROTO\textunderscore WHILEBODY}} = 
+\begin{lstlisting}
+    1. [Operation |in allowed Dialects]
+    2. func.call @sym_name((*@\textit{operands;}@*)) -> (*@\textit{resulttypes}@*)
+    3. scf::yield %yieldRes : (*@\textit{? | = resultstypes guranteed?}@*)
+    4. [Operation |in allowed Dialects and with OpTrait ReturnLike or IsTerminator]
+\end{lstlisting}
+and \texttt{\textit{PROTO\textunderscore TERMINATION}} = 
+\begin{lstlisting}
+    1. [Operation |in allowed Dialects]
+    2. scf::yield %yieldRes : (*@\textit{? | = resultstypes guranteed?}@*)
+\end{lstlisting}
+
+\subsubsection{callOp}
+Operation of type \texttt{func::CallOp} and the form 
+\begin{lstlisting}
+    func.call @sym_name((*@\textit{funcOp.operands;}@*)) -> (*@\textit{funcOp.resulttypes}@*)
+\end{lstlisting}
+For which holds true that 
+\begin{enumerate}
+    \item Operation referenced by \texttt{sym\textunderscore name} in \texttt{SymbolTable} is funcOp. I.e. callOp calls funcOp.
+    \item callOp can be found when walking over funcOp. 
+    \item All owners of uses of callOp's results have OpTrait ReturnLike or IsTerminator
+    \item (3) Holds also holds true for uses of owners of uses of callOp's result. I.e. any operation dependent on callOp's result has OpTrait ReturnLike or IsTerminator
+    \item All Operations in callOps block after callOp are Pure. (If dependent on callOp's results (3) and (4) have to hold. If not dependent on callOp's result, can get moved before callOp)
+    \item All operations dependent on results of ops in 5 are also Pure
+\end{enumerate}
+
+(1) and (2) set the requirement that callOp is a recursive call. 3 - 5 set the requirement that callOp is located at the tail of funcOp.
+
+\bibliography{refs}
+\end{document}

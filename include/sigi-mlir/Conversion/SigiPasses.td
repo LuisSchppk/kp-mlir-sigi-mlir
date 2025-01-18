@@ -11,4 +11,17 @@ include "PassUtil.td"
 
 def ConvertSigiToLLVM : ConvertToLlvm<"Sigi", "sigi">;
 
+
+def TailRecursionPass : Pass<"detect-tail-rec", "func::FuncOp"> {
+  let summary = "Detect tail recursions";
+
+//   let constructor = "mlir::sigi::createTailRecursionPass()";
+}
+
+def DestackPass : Pass<"destack", "func::FuncOp"> {
+  let summary = "Tries to remove stack as far as possible.";
+
+  // let constructor = "mlir::sigi::createDestackPass()";
+}
+
 #endif // SIGI_CONVERSION_PASSES

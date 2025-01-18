@@ -12,10 +12,10 @@
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/InitAllDialects.h"
-
 #include "mlir/InitAllExtensions.h"
 #include "mlir/InitAllPasses.h"
 #include "mlir/Pass/Pass.h"
+
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
@@ -30,10 +30,10 @@
 
 using namespace mlir;
 
-
 /// Add all the MLIR dialects to the provided registry.
-inline void registerUsedDialects(DialectRegistry &registry) {
-  // clang-format off
+inline void registerUsedDialects(DialectRegistry &registry)
+{
+    // clang-format off
   registry.insert<
     	        //   acc::OpenACCDialect,
                   affine::AffineDialect,
@@ -132,8 +132,8 @@ int main(int argc, char* argv[])
     registry.insert<closure::ClosureDialect, sigi::SigiDialect>();
 
     registerAllPasses();
-    registerClosureConversionPasses();
-    registerSigiConversionPasses();
+    closure::registerClosureConversionPasses();
+    sigi::registerSigiConversionPasses();
 
     return asMainReturnCode(
         MlirOptMain(argc, argv, "sigi-mlir optimizer driver\n", registry));

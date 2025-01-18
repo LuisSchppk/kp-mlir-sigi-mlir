@@ -66,6 +66,7 @@ module {
         %s29 = func.call @apply(%s28) : (!sigi.stack) -> !sigi.stack // (->) ->
         return %s29: !sigi.stack
     }
+    
     // __main__: ->
     func.func @__main__(%s0: !sigi.stack) -> !sigi.stack attributes {sigi.main} {
         %v1 = arith.constant 10: i32

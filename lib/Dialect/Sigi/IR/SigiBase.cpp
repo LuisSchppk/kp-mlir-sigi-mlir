@@ -27,24 +27,28 @@ class SigiInliner : public DialectInlinerInterface {
 public:
     explicit SigiInliner(Dialect *dialect) : DialectInlinerInterface(dialect) {};
 
-    bool  isLegalToInline(Operation *call, Operation *callable, bool wouldBeCloned) const override{
+    bool  isLegalToInline(Operation *, Operation *, bool ) const final override{
      return true;
   }
 
-  bool isLegalToInline(Region *dest, Region *src, bool wouldBeCloned,
-                               IRMapping &valueMapping) const override{
+  bool isLegalToInline(Region *, Region *, bool ,
+                               IRMapping &) const final  override{
     return true;
   }
 
-  virtual bool isLegalToInline(Operation *op, Region *dest, bool wouldBeCloned,
-                               IRMapping &valueMapping) const override{
+  bool isLegalToInline(Operation *, Region *, bool ,
+                               IRMapping &) const final override{
     return true;
   }
+
+  void handleTerminator(Operation*, Block*) const final override{}
+
+  void handleTerminator(Operation*, ValueRange) const final override{}
 };
 
 void SigiDialect::initialize()
 {
     registerOps();
     registerTypes();
-    addInterfaces<SigiInliner>();
+    addInterface<SigiInliner>();
 }

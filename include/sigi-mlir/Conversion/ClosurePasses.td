@@ -12,6 +12,12 @@ include "PassUtil.td"
 
 def ConvertClosureToLLVM : ConvertToLlvm<"Closure", "closure">;
 
+def PrepareClosureInline : Pass<"prep-closure-inline", "func::FuncOp"> {
+  let summary = "Prepare Closure Inlining by making sure closure in if statements have the required pattern.";
+}
 
+def ClosureInline : Pass<"closure-inline", "mlir::ModuleOp"> {
+  let summary = "Run Closure Inlining with the pipeline --canonicalize --inline --canonicalize --prep-closure-inline --canonicalize --inlines";
+}
 
 #endif // CLOSURE_CONVERSION_PASSES
