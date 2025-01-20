@@ -506,9 +506,10 @@ private:
 
     LogicalResult getYield(Block* block, scf::YieldOp &yield, func::FuncOp &funcOp) const
     {
-        SmallVector<scf::YieldOp> yields{
-            block->getOps<scf::YieldOp>().begin(),
-            block->getOps<scf::YieldOp>().end()};
+        SmallVector<Operation*> yields;
+        for(auto yield : block->getOps<scf::YieldOp>()) {
+            yields.push_back(yield.getOperation());
+        }
         if (yields.empty()) {
             emitError(
                 funcOp->getLoc(),
@@ -520,7 +521,8 @@ private:
                 "Passed block during eliminateRecursiveCalls contains more than one yieldOp.\n");
             return llvm::failure();
         } else if (yields.front()->getBlock() == block) {
-            yield = yields.front();
+            auto uncast_yield = yields[0];
+            yield = llvm::cast<scf::YieldOp>(uncast_yield);
             return llvm::success();
         } else {
             emitError(
