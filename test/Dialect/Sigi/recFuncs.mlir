@@ -83,29 +83,29 @@ module {
     return %result : i32
   }
 
-  // 6. Tail-recursive: Sum of N numbers
-  func.func @sum_n(%n: i32, %acc: i32) -> i32 {
-    %zero = arith.constant 0 : i32
-    %is_zero = arith.cmpi "eq", %n, %zero : i32
-    %is_non_negative = arith.cmpi "sge", %n, %zero : i32
-    %result = scf.if %is_zero -> i32 {
-        %result = scf.if %is_zero -> i32 { 
-        %next_n = arith.subi %n, %zero : i32
-        %next_acc = arith.addi %acc, %n : i32
-        %result = func.call @sum_n(%next_n, %next_acc) : (i32, i32) -> i32
-        scf.yield %result : i32
-      } else {
-        scf.yield %acc : i32
-      }
-      scf.yield %acc : i32
-    } else {
-      %next_n = arith.subi %n, %zero : i32
-      %next_acc = arith.addi %acc, %n : i32
-      // %result = func.call @sum_n(%next_n, %next_acc) : (i32, i32) -> i32
-      scf.yield %next_acc : i32
-    }
-    return %result : i32
-  }
+  // // // 6. Tail-recursive: Sum of N numbers
+  // func.func @sum_n(%n: i32, %acc: i32) -> i32 {
+  //   %zero = arith.constant 0 : i32
+  //   %is_zero = arith.cmpi "eq", %n, %zero : i32
+  //   %is_non_negative = arith.cmpi "sge", %n, %zero : i32
+  //   %result = scf.if %is_zero -> i32 {
+  //       %result = scf.if %is_zero -> i32 { 
+  //       %next_n = arith.subi %n, %zero : i32
+  //       %next_acc = arith.addi %acc, %n : i32
+  //       %result = func.call @sum_n(%next_n, %next_acc) : (i32, i32) -> i32
+  //       scf.yield %result : i32
+  //     } else {
+  //       scf.yield %acc : i32
+  //     }
+  //     scf.yield %acc : i32
+  //   } else {
+  //     %next_n = arith.subi %n, %zero : i32
+  //     %next_acc = arith.addi %acc, %n : i32
+  //     // %result = func.call @sum_n(%next_n, %next_acc) : (i32, i32) -> i32
+  //     scf.yield %next_acc : i32
+  //   }
+  //   return %result : i32
+  // }
 
   // 7. Non-recursive: Absolute value
   func.func @absolute(%x: i32) -> i32 {
@@ -184,14 +184,14 @@ module {
       scf.yield %res1 : i32
      }
 
-    //  %result2 = scf.if %is_b_zero -> (i32) {
-    //    scf.yield %acc2 : i32
-    //  } else {
-    //   %new_b = arith.subi %b, %one : i32
-    //  %new_acc2 = arith.muli %acc2, %b : i32
-    //     %res2, %ignore2 = func.call @double_tail_recursive(%a, %new_b, %acc1, %new_acc2) : (i32, i32, i32, i32) -> (i32, i32)
-    //     scf.yield %res2 : i32
-    // } 
+     %result3 = scf.if %is_b_zero -> (i32) {
+       scf.yield %acc2 : i32
+     } else {
+      %new_b = arith.subi %b, %one : i32
+     %new_acc2 = arith.muli %acc2, %b : i32
+        %res2, %ignore2 = func.call @double_tail_recursive(%a, %new_b, %acc1, %new_acc2) : (i32, i32, i32, i32) -> (i32, i32)
+        scf.yield %res2 : i32
+    } 
 
     return %result1, %result2 : i32, i32
     }   

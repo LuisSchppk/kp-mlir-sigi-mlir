@@ -91,15 +91,49 @@ bool isBeforeInOp(Operation* first, Operation* second)
     return isBefore;
 }
 
-llvm::SmallVector<Operation*> getRecursiveCalls(mlir::func::FuncOp op)
+LogicalResult
+getRecursiveCalls(mlir::func::FuncOp op, llvm::SmallVector<Operation*> &recursiveCalls)
 {
-    llvm::SmallVector<Operation*> result;
+
     op->walk([&](mlir::func::CallOp nestedOp) {
         auto callee = nestedOp.getCalleeAttr();
         auto funcOp = mlir::SymbolTable::lookupNearestSymbolFrom(op, callee);
-        if (op == funcOp) result.push_back(nestedOp.getOperation());
+        if (op == funcOp) recursiveCalls.push_back(nestedOp.getOperation());
     });
-    return result;
+    if (recursiveCalls.empty()) {
+        LLVM_DEBUG(
+            llvm::errs()
+            << "FuncOp " << op.getSymNameAttr() << " at " << op->getLoc() << " is not recursive\n");
+        return llvm::failure();
+    } else {
+
+        LLVM_DEBUG(
+            llvm::errs()
+            << "FuncOp " << op.getSymNameAttr() << " at " << op->getLoc()
+            << " is recursive and has " << recursiveCalls.size() << " recursive call(s). \n");
+        return llvm::success();
+    }
+}
+
+LogicalResult isTailCall(Operation* funcOp, Operation* op)
+{
+    auto next = op->getNextNode();
+    while (!llvm::isa<func::ReturnOp>(next)) {
+        // LLVM_DEBUG(llvm::errs() << "Tail Call analysis at " << next->getLoc() << "\n");
+        if (next->hasTrait<OpTrait::ReturnLike>() || next->hasTrait<OpTrait::IsTerminator>()) {
+            auto parentOp = next->getParentOp();
+            next = parentOp->getNextNode();
+        } else {
+            LLVM_DEBUG(
+                llvm::errs()
+                << "Encountered non-terminating operation on path form recursive call to "
+                   "func.return. Operation at "
+                << op->getLoc() << "\n");
+            return llvm::failure();
+        }
+    }
+    LLVM_DEBUG(llvm::errs() << "Tail Call analysis done: Op at " << op->getLoc() << " is a Tail Call\n");
+    return llvm::success();
 }
 
 llvm::SmallVector<Operation*> getReturnOps(func::FuncOp funcOp)
@@ -120,7 +154,7 @@ llvm::SmallVector<Operation*> getReturnOps(func::FuncOp funcOp)
 llvm::MapVector<func::CallOp, llvm::SmallVector<Operation*>>
 getRecCallUses(llvm::SmallVector<Operation*> recCalls)
 {
-    thread_local llvm::MapVector<func::CallOp, llvm::SmallVector<Operation*>> recCallAndUses;
+    llvm::MapVector<func::CallOp, llvm::SmallVector<Operation*>> recCallAndUses;
     bool valid = !recCalls.empty();
 
     for (auto op : recCalls) {
@@ -320,19 +354,11 @@ bool checkSuccessorOps(
 
 namespace {
 
-struct ConstructIterativeVersion : public OpRewritePattern<func::FuncOp> {
+struct ConstructIterativeVersion : OpRewritePattern<func::FuncOp> {
 public:
-    explicit ConstructIterativeVersion(
-        MLIRContext* context,
-        llvm::MapVector<func::CallOp, llvm::SmallVector<Operation*>>* recCallsAndUses)
-            : OpRewritePattern<func::FuncOp>(context)
-    {
-        this->recCallsAndUses = recCallsAndUses;
-    }
+    using OpRewritePattern<func::FuncOp>::OpRewritePattern;
 
 private:
-    llvm::MapVector<func::CallOp, llvm::SmallVector<Operation*>>* recCallsAndUses;
-
     std::pair<scf::IfOp, Region*>
     getTopMostIfAndWhileBody(func::FuncOp funcOp, func::CallOp callOp) const
     {
@@ -569,7 +595,10 @@ private:
 
         // Is actual recursive function and was categorized as tail call recursion in previous step.
         ModuleOp moduleOp = funcOp->getParentOfType<ModuleOp>();
-        auto calleeAttr = recCallsAndUses->front().first.getCalleeAttr();
+        SmallVector<Operation*> recursiveCalls;
+        if(getRecursiveCalls(funcOp, recursiveCalls).failed()) return llvm::failure();
+        auto callOp = llvm::cast<func::CallOp>(recursiveCalls.front());
+        auto calleeAttr = callOp.getCalleeAttr();
         SmallVector<Operation*> sym;
         if (!moduleOp) {
             emitError(
@@ -589,8 +618,6 @@ private:
         IRMapping toAfter;
 
         // !!! FOR NOW RECURSION WITH ONE CALL.
-        auto callOp = recCallsAndUses->front().first; // first recursive call.
-
         auto ifAndBody = getTopMostIfAndWhileBody(funcOp, callOp);
         auto topMostIf = ifAndBody.first;
         auto whileBody = ifAndBody.second;
@@ -795,42 +822,18 @@ struct TailRecursionPass : public mlir::sigi::impl::TailRecursionPassBase<TailRe
     void runOnOperation() override
     {
         func::FuncOp operation = getOperation();
-        ModuleOp moduleOp = operation->getParentOfType<ModuleOp>();
-        auto recCalls = getRecursiveCalls(operation);
+        SmallVector<Operation*> recCalls;
+        if (getRecursiveCalls(operation, recCalls).failed()) return;
 
-        if (recCalls.empty()) {
-            LLVM_DEBUG(
-                llvm::errs() << "######\n Function " << operation.getNameAttr()
-                             << " contains no recursive calls\n");
-            return;
-        }
-
-        auto recCallsAndUses = getRecCallUses(recCalls);
-        bool validSuccessors = checkSuccessorOps(operation.getOperation(), recCallsAndUses);
-        if (recCallsAndUses.empty()) {
-            LLVM_DEBUG(
-                llvm::errs() << "###### \n Function " << getOperation().getNameAttr()
-                             << " is recursive but not tail recursive.\n");
-            return;
-        } else if (!validSuccessors) {
-            LLVM_DEBUG(
-                llvm::errs()
-                << "###### \n Function " << getOperation().getNameAttr()
-                << " is recursiv due to non-sideeffect free ops after recursive call.\n");
-            return;
-        } else {
-            LLVM_DEBUG(
-                llvm::errs() << "###### \n Function " << getOperation().getNameAttr()
-                             << " is tail recursive.\n");
+        for(auto call : recCalls) {
+            if(isTailCall(operation.getOperation(), call).failed()) return;
         }
 
         RewritePatternSet patterns(&getContext());
         GreedyRewriteConfig greedyConf;
         greedyConf.strictMode = GreedyRewriteStrictness::ExistingOps;
-        patterns.add<ConstructIterativeVersion>(&getContext(), &recCallsAndUses);
+        patterns.add<ConstructIterativeVersion>(&getContext());
         (void)applyOpPatternsAndFold({operation}, std::move(patterns), greedyConf);
-
-        // if (failed(moduleOp.verify())) moduleOp.emitError("Verification failed");
     }
 };
 } // namespace
