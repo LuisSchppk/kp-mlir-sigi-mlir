@@ -14,7 +14,7 @@ def ConvertSigiToLLVM : ConvertToLlvm<"Sigi", "sigi">;
 
 def TailRecursionPass : Pass<"detect-tail-rec", "func::FuncOp"> {
   let summary = "Detect tail recursions";
-
+   let dependentDialects = ["mlir::memref::MemRefDialect"];
 //   let constructor = "mlir::sigi::createTailRecursionPass()";
 }
 

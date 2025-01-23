@@ -125,8 +125,8 @@ inline void registerUsedDialects(DialectRegistry &registry)
 int main(int argc, char* argv[])
 {
     DialectRegistry registry;
-    // registerAllDialects(registry);
-    registerUsedDialects(registry);
+    registerAllDialects(registry);
+    // registerUsedDialects(registry);
     registerAllExtensions(registry);
 
     registry.insert<closure::ClosureDialect, sigi::SigiDialect>();
