@@ -361,7 +361,8 @@ private:
 
 struct ConstructIterativeVersion : OpRewritePattern<func::FuncOp> {
 private:
-    std::string callYieldAttr = "callYield";
+    std::string terminationYieldAttr = "terminationYield";
+    std::string callYieldAttr = "CallYield";
 
 public:
     using OpRewritePattern<func::FuncOp>::OpRewritePattern;
@@ -374,25 +375,33 @@ public:
         return constant;
     }
 
-    std::pair<scf::IfOp, Region*>
-    getTopMostIfAndWhileBody(func::FuncOp funcOp, func::CallOp callOp) const
+    LogicalResult getTopMostIfAndWhileBody(
+        func::FuncOp funcOp,
+        func::CallOp callOp,
+        scf::IfOp &topMostIf,
+        Region*& proto_body,
+        bool &hasNestedIfs) const
     {
-        auto encompassingIf = callOp->getParentOfType<scf::IfOp>();
-        bool isTopMost = encompassingIf->getParentOp() == funcOp;
-        Region* whileBody = callOp->getParentRegion();
-
-        while (encompassingIf && !isTopMost) {
-            encompassingIf = encompassingIf->getParentOfType<scf::IfOp>();
-            whileBody = &encompassingIf.getThenRegion() == whileBody->getParentRegion()
-                            ? &encompassingIf.getThenRegion()
-                            : &encompassingIf.getElseRegion();
-            isTopMost = encompassingIf->getParentOp() == funcOp;
+        topMostIf = callOp->getParentOfType<scf::IfOp>();
+        bool isTopMost = topMostIf->getParentOp() == funcOp;
+        proto_body = callOp->getParentRegion();
+        hasNestedIfs = topMostIf && !isTopMost;
+        while (topMostIf && !isTopMost) {
+            topMostIf = topMostIf->getParentOfType<scf::IfOp>();
+            proto_body = &topMostIf.getThenRegion() == proto_body->getParentRegion()
+                            ? &topMostIf.getThenRegion()
+                            : &topMostIf.getElseRegion();
+            isTopMost = topMostIf->getParentOp() == funcOp;
         }
-        return {encompassingIf, whileBody};
+
+        if (topMostIf->isAncestor(callOp) && proto_body)
+            return llvm::success();
+        else
+            return llvm::failure();
     }
 
     LogicalResult
-    findLCVs(func::FuncOp funcOp, Operation* border, Region* whileBody, SmallVector<Value> &lcvs)
+    findLCVs(func::FuncOp funcOp, Operation* border, Region* proto_body, SmallVector<Value> &lcvs)
         const
     {
         SmallVector<Value> defsHead;
@@ -400,7 +409,7 @@ public:
         SmallVector<Operation*> premptiveDefinitions;
         SmallVector<Value> usesBody;
 
-        whileBody->walk([&](Operation* op) {
+        proto_body->walk([&](Operation* op) {
             if (!isInvariant(funcOp, op))
                 for (auto operands : op->getOperands()) usesBody.push_back(operands);
         });
@@ -427,8 +436,7 @@ public:
         Region* terminationBranch,
         scf::IfOp topMostIf,
         IRMapping &resultMapping,
-        PatternRewriter &rewriter,
-        Operation* returnOp) const
+        PatternRewriter &rewriter) const
     {
         terminationBranch->walk([&](Operation* op) {
             if (isa<scf::YieldOp>(op) && op->getParentOp() == topMostIf) {
@@ -474,6 +482,7 @@ public:
         SmallVector<std::pair<Operation*, Operation*>> eliminate;
         ModuleOp moduleOp = funcOp->getParentOfType<ModuleOp>();
         afterBody->walk([&](func::CallOp callOp) {
+
             // in isTail we checked, that the next node is a Returnlike or terminatorLike.
             // HERE WE JUST ASSUME THAT THIS TERMINATOR/RETURNLIKE IS A YIELDOP BY VIRTUE OF
             // ASSUMPTION ALL CONTROLFLOW IS SCF.
@@ -523,7 +532,7 @@ public:
         return llvm::success();
     }
 
-    void fixIfOp(
+    void adjustIfOpResultType(
         func::FuncOp funcOp,
         scf::YieldOp &callYield,
         IRMapping toAfter,
@@ -533,9 +542,16 @@ public:
         scf::IfOp newIf = NULL;
         if (auto ifOp = llvm::dyn_cast<scf::IfOp>(callYield->getParentOp())) {
             rewriter.modifyOpInPlace(callYield, [&]() {
+                if (callYield->hasAttr(terminationYieldAttr))
+                    callYield->removeAttr(terminationYieldAttr);
                 callYield->setAttr(callYieldAttr, rewriter.getUnitAttr());
             });
+
             auto other = ifOp.thenYield() == callYield ? ifOp.elseYield() : ifOp.thenYield();
+            rewriter.modifyOpInPlace(other, [&]() {
+                if (!other->hasAttr(callYieldAttr))
+                    other->setAttr(terminationYieldAttr, rewriter.getUnitAttr());
+            });
             auto callIdx = ifOp.thenYield() == callYield ? 0 : 1;
             if (!llvm::equal(callYield->getOperandTypes(), ifOp->getOperandTypes())) {
                 rewriter.setInsertionPointAfter(ifOp);
@@ -576,7 +592,7 @@ public:
         PatternRewriter &rewriter,
         SmallVector<Operation*> &allocations,
         SmallVector<unsigned> &order,
-        DenseMap<unsigned, Type>& idxToType) const
+        DenseMap<unsigned, Type> &idxToType) const
     {
         order.clear();
         allocations.clear();
@@ -608,10 +624,61 @@ public:
         return llvm::success();
     }
 
+    LogicalResult constructWhileOp(
+        func::FuncOp iterativeFunc,
+        PatternRewriter &rewriter,
+        SmallVector<Value> &lcvs,
+        scf::IfOp topMostIf,
+        IRMapping &toPreheader,
+        SmallVector<Value> &initValues,
+        bool hasNestedIfs,
+        std::pair<int, int> &idx_termination_flags,
+        scf::WhileOp &whileOp) const
+    {
+        initValues.clear();
+
+        // Always pass updated condition to next iteration/ check before first iteration.
+        auto cond = topMostIf.getCondition();
+        idx_termination_flags.first = lcvs.size();
+        lcvs.push_back(toPreheader.lookup(cond));
+
+        if (hasNestedIfs) {
+            auto boolType = rewriter.getIntegerType(1);
+            auto break_flag = rewriter.create<arith::ConstantOp>(
+                iterativeFunc->getLoc(),
+                boolType,
+                rewriter.getIntegerAttr(boolType, 0));
+            idx_termination_flags.second = lcvs.size();
+            lcvs.push_back(break_flag.getResult());
+        } else {
+            idx_termination_flags.second = -1;
+        }
+
+        /* Calculate initial values that will be passed to the whileOp. These are either block args
+         * or results from the prehead.
+         */
+        SmallVector<Type> initTypes;
+        SmallVector<Location> initLocs;
+        for (auto value : lcvs) {
+            auto mappedValue = toPreheader.lookupOrDefault(value);
+            initValues.push_back(mappedValue);
+            initTypes.push_back(mappedValue.getType());
+            initLocs.push_back(mappedValue.getLoc());
+        }
+
+        whileOp = rewriter.create<scf::WhileOp>(iterativeFunc->getLoc(), initTypes, initValues);
+
+        // Create Bodies for Before And After Region.
+        rewriter
+            .createBlock(&whileOp.getBefore(), whileOp.getBefore().begin(), initTypes, initLocs);
+        rewriter.createBlock(&whileOp.getAfter(), whileOp.getAfter().begin(), initTypes, initLocs);
+        return llvm::success();
+    }
+
     LogicalResult fillAfterBlock(
         Block* afterBlock,
         Block* entryBlock,
-        Region* protoBody,
+        Region* proto_body,
         scf::WhileOp &whileOp,
         SmallVector<Value> &lcvs,
         SmallVector<Operation*> postbody,
@@ -620,11 +687,10 @@ public:
         PatternRewriter &rewriter,
         func::FuncOp funcOp,
         scf::YieldOp &whileYield,
-        unsigned condition_index,
-        int multi_terminator_flag_idx) const
+        std::pair<int, int> idx_termination_flags) const
     {
         rewriter.setInsertionPointToStart(whileOp.getAfterBody());
-        for (auto &op : protoBody->getOps()) {
+        for (auto &op : proto_body->getOps()) {
             auto clone = rewriter.clone(op, toAfter);
             toAfter.map(op.getResults(), clone->getResults());
         }
@@ -645,7 +711,7 @@ public:
         scf::IfOp parentIf;
         scf::IfOp oldIf;
         while (current.getOperation()->getParentOp() != whileOp)
-            fixIfOp(funcOp, current, toAfter, rewriter);
+            adjustIfOpResultType(funcOp, current, toAfter, rewriter);
 
         // "POSTBODY"
         rewriter.setInsertionPointToEnd(afterBlock);
@@ -654,8 +720,6 @@ public:
         Operation* finalYield;
         if (getFinalYield(whileOp.getAfterBody(), funcOp, finalYield).failed())
             return llvm::failure();
-        LLVM_DEBUG(llvm::errs() << "FINAL YIELD AT " << finalYield->getLoc() << "\n");
-        afterBlock->print(llvm::errs());
         postbodyLCVs.resize(lcvs.size());
         for (size_t i = 0; i < finalYield->getOperands().size(); i++) {
             auto yieldOperand = finalYield->getOperands()[i];
@@ -680,32 +744,22 @@ public:
         }
 
         rewriter.setInsertionPointToEnd(afterBlock);
-        arith::CmpIOp termination = rewriter.create<arith::CmpIOp>(
-            funcOp->getLoc(),
-            rewriter.getIntegerType(1),
-            arith::CmpIPredicate::sgt,
-            postbodyLCVs[condition_index],
-            postbodyLCVs[multi_terminator_flag_idx]);
-        postbodyLCVs[condition_index] = termination.getResult();
+        if (idx_termination_flags.second != -1) {
+            arith::CmpIOp termination = rewriter.create<arith::CmpIOp>(
+                funcOp->getLoc(),
+                rewriter.getIntegerType(1),
+                arith::CmpIPredicate::sgt,
+                postbodyLCVs[idx_termination_flags.first],
+                postbodyLCVs[idx_termination_flags.second]);
+            postbodyLCVs[idx_termination_flags.first] = termination.getResult();
+        }
+
         whileYield = rewriter.create<scf::YieldOp>(funcOp->getLoc(), postbodyLCVs);
         rewriter.modifyOpInPlace(whileOp, [&]() {
             whileYield->setAttr(callYieldAttr, rewriter.getUnitAttr());
         });
         rewriter.eraseOp(finalYield);
         return llvm::success();
-    }
-
-    bool containsNestedIfWithCalls(scf::IfOp topMostIf, SmallVector<Operation*> recCalls) const
-    {
-        for (auto &region : topMostIf->getRegions()) {     // walk over both regions
-            for (auto ifOp : region.getOps<scf::IfOp>()) { // check all contained ifs
-                for (auto call :
-                     recCalls) { // if there exists at least one nested if containing a call
-                    if (ifOp->isAncestor(call)) return true; // return true.
-                }
-            }
-        }
-        return false;
     }
 
     LogicalResult determineMultiTerminationBehaviour(
@@ -730,8 +784,7 @@ public:
                 };
         }
         if (!hijackOperands) resultIdxs.clear();
-        // assert(lcvMode && resultIdxs.size() == funcOp.getNumResults() && "\nCould not find a spot
-        // for every result in lcv, but did not switch to memref!\n");
+        else assert(resultIdxs.size() == funcOp.getFunctionType().getNumResults() && "Can not fit result into return types.");
         return llvm::success();
     }
 
@@ -749,10 +802,12 @@ public:
         // !!! FOR NOW RECURSION WITH ONE CALL.
         auto call = recursiveCalls.front();
         auto callOp = cast<func::CallOp>(call);
-        auto ifAndBody = getTopMostIfAndWhileBody(funcOp, callOp);
-        auto topMostIf = ifAndBody.first;
-        auto protoBody = ifAndBody.second;
-
+        scf::IfOp topMostIf;
+        Region* proto_body = nullptr;
+        bool hasNestedIfs;
+        if (getTopMostIfAndWhileBody(funcOp, callOp, topMostIf, proto_body, hasNestedIfs).failed())
+            return llvm::failure();
+        
         // Create new Function Skeleton
         rewriter.setInsertionPointAfter(funcOp);
         auto iterativeFunc = rewriter.create<func::FuncOp>(
@@ -788,48 +843,23 @@ public:
 
         SmallVector<Value> lcvs;
 
-        if (findLCVs(funcOp, topMostIf, protoBody, lcvs).failed()) return llvm::failure();
+        if (findLCVs(funcOp, topMostIf, proto_body, lcvs).failed()) return llvm::failure();
 
-        // Always pass updated condition to next iteration/ check before first iteration.
-        auto cond = topMostIf.getCondition();
-        unsigned condition_index = lcvs.size();
-        lcvs.push_back(toPreheader.lookup(cond));
-
-        int multi_terminator_flag_idx = -1;
-        auto boolType = rewriter.getIntegerType(1);
-        auto flag = rewriter.create<arith::ConstantOp>(
-            iterativeFunc->getLoc(),
-            boolType,
-            rewriter.getIntegerAttr(boolType, 1));
-        lcvs.push_back(flag);
-        multi_terminator_flag_idx = condition_index + 1;
-
-        /* Calculate initial values that will be passed to the whileOp. These are either block args
-         * or results from the prehead.
-         */
+        scf::WhileOp whileOp;
         SmallVector<Value> initValues;
-        SmallVector<Type> initTypes;
-        SmallVector<Location> initLocs;
-        for (auto value : lcvs) {
-            auto mappedValue = toPreheader.lookupOrDefault(value);
-            initValues.push_back(mappedValue);
-            initTypes.push_back(mappedValue.getType());
-            initLocs.push_back(mappedValue.getLoc());
-        }
-
-        auto whileOp = rewriter.create<scf::WhileOp>(funcOp->getLoc(), initTypes, initValues);
-
-        // Create Bodies for Before And After Region.
-        auto* beforeBlock = rewriter.createBlock(
-            &whileOp.getBefore(),
-            whileOp.getBefore().begin(),
-            initTypes,
-            initLocs);
-        auto* afterBlock = rewriter.createBlock(
-            &whileOp.getAfter(),
-            whileOp.getAfter().begin(),
-            initTypes,
-            initLocs);
+        std::pair<int, int> idx_termination_flags;
+        if (constructWhileOp(
+                iterativeFunc,
+                rewriter,
+                lcvs,
+                topMostIf,
+                toPreheader,
+                initValues,
+                hasNestedIfs,
+                idx_termination_flags,
+                whileOp)
+                .failed())
+            return llvm::failure();
 
         /*
          *  Fill BEFORE block
@@ -837,20 +867,21 @@ public:
         rewriter.setInsertionPointToStart(whileOp.getBeforeBody());
         rewriter.create<scf::ConditionOp>(
             funcOp->getLoc(),
-            beforeBlock->getArgument(condition_index),
-            beforeBlock->getArguments());
+            whileOp.getBeforeBody()->getArgument(idx_termination_flags.first),
+            whileOp.getBeforeBody()->getArguments());
+
+        // AFTER
 
         // Map from old lcv onto After-BlockArgs
-        for (auto [from, to] : llvm::zip_equal(initValues, afterBlock->getArguments()))
+        for (auto [from, to] : llvm::zip_equal(initValues, whileOp.getAfterBody()->getArguments()))
             toAfter.map(from, to);
         toAfter = merge_value_map(toPreheader, toAfter);
 
-        // AFTER
         scf::YieldOp whileYield;
         if (fillAfterBlock(
-                afterBlock,
+                whileOp.getAfterBody(),
                 entryBlock,
-                protoBody,
+                proto_body,
                 whileOp,
                 lcvs,
                 postbody,
@@ -859,8 +890,7 @@ public:
                 rewriter,
                 funcOp,
                 whileYield,
-                condition_index,
-                multi_terminator_flag_idx)
+                idx_termination_flags)
                 .failed())
             return llvm::failure(); // Termination
 
@@ -872,7 +902,7 @@ public:
 
         bool hijackOperands;
 
-        if (containsNestedIfWithCalls(topMostIf, recursiveCalls)) {
+        if (hasNestedIfs) {
             if (determineMultiTerminationBehaviour(
                     iterativeFunc,
                     iterativeFunc.getFunctionType().getInputs(),
@@ -891,7 +921,7 @@ public:
         LogicalResult success = llvm::success();
         SmallVector<Operation*> markForErasure;
         whileOp.getAfterBody()->walk([&](scf::YieldOp yield) {
-            if (!yield->hasAttr(callYieldAttr)) {
+            if (yield->hasAttr(terminationYieldAttr)) {
                 if (llvm::equal(yield->getResultTypes(), iterativeFunc.getResultTypes())) {
                     emitError(
                         funcOp->getLoc(),
@@ -938,8 +968,11 @@ public:
                     }
                 }
 
-                hijackedResults.push_back(flag);
-                rewriter.create<scf::YieldOp>(yield->getLoc(), hijackedResults);
+                hijackedResults.push_back(lcvs[idx_termination_flags.second]);
+                auto newYield = rewriter.create<scf::YieldOp>(yield->getLoc(), hijackedResults);
+                rewriter.modifyOpInPlace(newYield, [&]() {
+                    newYield->setAttr(terminationYieldAttr, rewriter.getUnitAttr());
+                });
                 markForErasure.push_back(yield);
             }
         });
@@ -961,7 +994,8 @@ public:
          * are mapped onto the blockargs manually in the block above.
          * HOW CAN I SHOW THIS FORMALLY? WHY IS whileYield -> whileop not enough?
          */
-        for (auto [from, to] : llvm::zip_equal(afterBlock->getArguments(), whileOp->getResults()))
+        for (auto [from, to] :
+             llvm::zip_equal(whileOp.getAfterBody()->getArguments(), whileOp->getResults()))
             resultMapping.map(from, to);
 
         /*
@@ -991,17 +1025,16 @@ public:
          */
         resultMapping = merge_value_map(toAfter, resultMapping);
 
-        Region* terminationBranch = &topMostIf.getThenRegion() == protoBody
+        Region* terminationBranch = &topMostIf.getThenRegion() == proto_body
                                         ? &topMostIf.getElseRegion()
                                         : &topMostIf.getThenRegion();
-
+        
         rewriter.setInsertionPointAfter(whileOp);
-        Operation* finalReturn;
-        if (containsNestedIfWithCalls(topMostIf, recursiveCalls)) {
+        if (hasNestedIfs) {
             auto termination_if = rewriter.create<scf::IfOp>(
                 iterativeFunc->getLoc(),
                 iterativeFunc.getFunctionType().getResults(),
-                whileOp->getResults()[multi_terminator_flag_idx],
+                whileOp->getResults()[idx_termination_flags.second],
                 true,
                 true);
 
@@ -1011,8 +1044,7 @@ public:
                     terminationBranch,
                     topMostIf,
                     resultMapping,
-                    rewriter,
-                    returnOp)
+                    rewriter)
                     .failed())
                 return llvm::failure();
 
@@ -1035,14 +1067,9 @@ public:
                     auto index = counters[idx]++;
                     auto indexOp =
                         rewriter.create<arith::ConstantIndexOp>(iterativeFunc->getLoc(), index);
-                    assert(idxToType.contains(idx) && "\nINDEX NOT FOUND\n");
-                    LLVM_DEBUG(llvm::errs() << "\n" << idx << "\n");
-                    auto type =  idxToType[idx];
-                    assert(type && "\n TYPE IS NULL \n"); 
-                    type.print(llvm::errs());
                     auto result = rewriter.create<memref::LoadOp>(
                         iterativeFunc->getLoc(),
-                        type,
+                        idxToType[idx],
                         memref,
                         indexOp.getResult());
                     finalReturn.push_back(result.getResult());
@@ -1057,11 +1084,10 @@ public:
                     terminationBranch,
                     topMostIf,
                     resultMapping,
-                    rewriter,
-                    returnOp)
+                    rewriter)
                     .failed())
                 return llvm::failure();
-            finalReturn = rewriter.clone(*returnOp, resultMapping);
+            rewriter.clone(*returnOp, resultMapping);
         }
 
         rewriter.setInsertionPoint(entryBlock->getTerminator());
@@ -1091,8 +1117,6 @@ struct TailRecursionPass : public mlir::sigi::impl::TailRecursionPassBase<TailRe
 
     void runOnOperation() override
     {
-        for (auto* dialect : getContext().getLoadedDialects())
-            llvm::outs() << "- " << dialect->getNamespace() << "\n";
         func::FuncOp operation = getOperation();
         SmallVector<Operation*> recCalls;
         if (getRecursiveCalls(operation, recCalls).failed()) return;
