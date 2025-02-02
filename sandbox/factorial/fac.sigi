@@ -1,0 +1,15 @@
+
+
+let factorial: int -> int =
+    -> n;
+    if (n = 0) 1
+    else 
+        n * (n - 1) factorial ;;
+
+5 factorial show
+
+
+
+
+
+
