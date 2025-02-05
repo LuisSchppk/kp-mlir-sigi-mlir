@@ -19,6 +19,7 @@
 #include <mlir/IR/Attributes.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinOps.h>
+#include <mlir/IR/Location.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/IR/Operation.h>
@@ -137,87 +138,94 @@ struct StackEliminationPass
 
             auto stackTypeAttr = llvm::cast<TypeAttr>(funcOp->getAttr("sigi.stackType"));
             auto stackFuncType = cast<FunctionType>(stackTypeAttr.getValue());
-            auto inputs = stackFuncType.getInputs();
-            auto outputs = stackFuncType.getResults();
+
+            // Stack -> reverts order
+            SmallVector<Type> inputs{llvm::reverse(stackFuncType.getInputs())};
+            SmallVector<Type> outputs{llvm::reverse(stackFuncType.getResults())};
             DenseMap<Value, SmallVector<Operation*>> stackParameter;
             DenseMap<Value, SmallVector<Operation*>> stackResults;
             auto inStacks = getStackFrom(entryBlock->getArguments());
             auto outStacks = getStackFrom(returnOp->getOperands());
 
             if (inStacks.size() > 1 || outStacks.size() > 1) return llvm::failure();
-            auto inStack = inStacks.front();
-            auto outStack = outStacks.front();
+            Value inStack;
+            Value outStack;
 
             SmallVector<Operation*> stack;
 
-            for (auto &use : inStack.getUses())
-                if (use.getOwner()) stack.push_back(use.getOwner());
+            if (!inStacks.empty()) {
+                inStack = inStacks.front();
+                for (auto &use : inStack.getUses())
+                    if (use.getOwner()) stack.push_back(use.getOwner());
 
-            while (!stack.empty() && stackParameter.size() < inputs.size()) {
-                auto current = stack.pop_back_val();
-                if (auto pop = llvm::dyn_cast<sigi::PopOp>(current)) {
-                    assert(
-                        pop.getValue().getType() == inputs[stackParameter.size()]
-                        && "Input Parameter has wrong type.");
+                while (!stack.empty() && stackParameter.size() < inputs.size()) {
+                    auto current = stack.pop_back_val();
+                    if (auto pop = llvm::dyn_cast<sigi::PopOp>(current)) {
+                        assert(
+                            pop.getValue().getType() == inputs[stackParameter.size()]
+                            && "Input Parameter has wrong type.");
 
-                    if (stackParameter.contains(pop.getInStack())) {
-                        auto ops = stackParameter[pop.getInStack()];
-                        ops.push_back(pop.getOperation());
-                        stackParameter.insert({pop.getInStack(), ops});
+                        if (stackParameter.contains(pop.getInStack())) {
+                            auto ops = stackParameter[pop.getInStack()];
+                            ops.push_back(pop.getOperation());
+                            stackParameter[pop.getInStack()] = ops;
+                        } else {
+                            stackParameter.insert({pop.getInStack(), {pop.getOperation()}});
+                        }
+
+                        for (auto &use : pop.getOutStack().getUses())
+                            if (use.getOwner()) stack.push_back(use.getOwner());
+
+                    } else if (auto ifOp = llvm::dyn_cast<scf::IfOp>(current)) {
+                        // NEVER THE CASE? NO WAY TO EVALUATE stack to i1
                     } else {
-                        stackParameter.insert({pop.getInStack(), {pop.getOperation()}});
+                        /*
+                         * Assumption: Dialects SCF, CF, Arith, Func, Sigi, Closure are allowed.
+                         * SCF -> Possible to be ARG to For, While,... sp we fail.
+                         * CF -> No Possible Uses
+                         * Arith -> No Possible Uses
+                         * Func -> Return of Call -> Failure, try to convert other func first, what
+                         *          happens on f -> g && g -> f ?
+                         * Sigi -> only pop
+                         * Closure -> inlined by now? otherwise fail this optimization.
+                         */
+                        return llvm::failure();
                     }
-
-                    for (auto &use : pop.getOutStack().getUses())
-                        if (use.getOwner()) stack.push_back(use.getOwner());
-
-                } else if (auto ifOp = llvm::dyn_cast<scf::IfOp>(current)) {
-                    // NEVER THE CASE? NO WAY TO EVALUATE stack to i1
-                } else {
-                    /*
-                     * Assumption: Dialects SCF, CF, Arith, Func, Sigi, Closure are allowed.
-                     * SCF -> Possible to be ARG to For, While,... sp we fail.
-                     * CF -> No Possible Uses
-                     * Arith -> No Possible Uses
-                     * Func -> Return of Call -> Failure, try to convert other func first, what
-                     *          happens on f -> g && g -> f ?
-                     * Sigi -> only pop
-                     * Closure -> inlined by now? otherwise fail this optimization.
-                     */
-                    return llvm::failure();
                 }
             }
 
             if (stackParameter.size() != inputs.size()) return llvm::failure();
 
             stack.clear();
-            stack = {outStack.getDefiningOp()};
-            while (!stack.empty() && stackResults.size() < outputs.size()) {
-                auto current = stack.pop_back_val();
-                if (auto push = llvm::dyn_cast<sigi::PushOp>(current)) {
-                    assert(
-                        push.getValue().getType() == outputs[stackResults.size()]
-                        && "Output Parameter has wrong type.");
 
-                    if (stackResults.contains(push.getOutStack())) {
-                        auto ops = stackResults[push.getOutStack()];
-                        ops.push_back(push.getOperation());
-                        stackResults.insert({push.getOutStack(), ops});
-                    } else {
-                        stackResults.insert({push.getInStack(), {push.getOperation()}});
+            if (!outStacks.empty()) {
+                outStack = outStacks.front();
+                stack = {outStack.getDefiningOp()};
+                while (!stack.empty() && stackResults.size() < outputs.size()) {
+                    auto current = stack.pop_back_val();
+                    if (auto push = llvm::dyn_cast<sigi::PushOp>(current)) {
+                        assert(
+                            push.getValue().getType() == outputs[stackResults.size()]
+                            && "Output Parameter has wrong type.");
+
+                        if (stackResults.contains(push.getOutStack())) {
+                            auto ops = stackResults[push.getOutStack()];
+                            ops.push_back(push.getOperation());
+                            stackResults[push.getOutStack()] = ops;
+                        } else {
+                            stackResults.insert({push.getInStack(), {push.getOperation()}});
+                        }
+                        stack.push_back(push.getInStack().getDefiningOp());
+                    } else if (auto ifOp = llvm::dyn_cast<scf::IfOp>(current)) {
+                        for (auto sigiStack : getStackFrom(ifOp.elseYield()->getOperands()))
+                            stack.push_back(sigiStack.getDefiningOp());
+
+                        for (auto sigiStack : getStackFrom(ifOp.thenYield()->getOperands()))
+                            stack.push_back(sigiStack.getDefiningOp());
+
+                    } else if (stack.empty()) {
+                        return llvm::failure();
                     }
-
-                    stack.push_back(push.getInStack().getDefiningOp());
-                    LLVM_DEBUG(llvm::errs() << current->getLoc() << "\n");
-                } else if (auto ifOp = llvm::dyn_cast<scf::IfOp>(current)) {
-                    for (auto sigiStack : getStackFrom(ifOp.elseYield()->getOperands()))
-                        stack.push_back(sigiStack.getDefiningOp());
-
-                    for (auto sigiStack : getStackFrom(ifOp.thenYield()->getOperands()))
-                        stack.push_back(sigiStack.getDefiningOp());
-
-                } else if (stack.empty()) {
-                    return llvm::failure();
                 }
             }
 
@@ -228,8 +236,8 @@ struct StackEliminationPass
 
             // bool globalStackNecessary = isGlobalStackNecessary(funcOp, inParamDefs,
             // outParamDefs);
-            bool hasGlobalStack = false;
-            funcOp->walk([&](sigi::GetGlobalStack) { hasGlobalStack = true; });
+            Operation* op_getGlobalStack = nullptr;
+            funcOp->walk([&](sigi::GetGlobalStack op) { op_getGlobalStack = op.getOperation(); });
 
             LLVM_DEBUG(llvm::errs() << " MATCH SUCCESS \n");
             // MATCH DONE
@@ -244,42 +252,101 @@ struct StackEliminationPass
              * 3. Insert global stack where needed
              * 4. Implement Safety for (1).
              */
-            for (auto op : allParamPops) LLVM_DEBUG(llvm::errs() << op->getLoc() << "\n");
-            if (!hasGlobalStack) {
+
+            if (!op_getGlobalStack) {
                 rewriter.setInsertionPointToStart(entryBlock);
                 auto globalStack = rewriter.create<sigi::GetGlobalStack>(
                     funcOp->getLoc(),
                     sigi::StackType::get(funcOp->getContext()));
 
-                if (stackParameter.empty()) {
-                    rewriter.replaceAllUsesWith(inStack, globalStack);
-                } else {
-                    auto lastParamPop = cast<sigi::PopOp>(allParamPops.back());
-                    rewriter.replaceAllUsesWith(lastParamPop.getOutStack(), globalStack);
-                }
+                if (inStack) rewriter.replaceAllUsesWith(inStack, globalStack.getGlobalStack());
+                op_getGlobalStack = globalStack.getOperation();
             }
 
-            // SmallVector<Type> newInTypes;
-            // for (auto oldIn : funcOp.getFunctionType().getInputs()) {
-            //     if (llvm::isa<sigi::StackType>(oldIn))
-            //         for (auto newIn : inputs) newInTypes.push_back(newIn);
-            //     else
-            //         newInTypes.push_back(oldIn);
-            // }
+            assert(op_getGlobalStack && "GLOBAL STACK WAS NOT SET!");
+            sigi::GetGlobalStack globalStackOp = cast<sigi::GetGlobalStack>(op_getGlobalStack);
+            if (inStack)
+                assert(
+                    inStack.use_empty()
+                    && "USE OF STACK ARG WAS NOT REPLACED IN THIS OR PREV. RUNS OF THE PATTERN.");
 
-            // SmallVector<Type> newOutTypes;
-            // SmallVector<Value> newOuts;
-            // for (auto oldOut : returnOp->getOperands()) {
-            //     if (llvm::isa<sigi::StackType>(oldOut.getType())) {
-            //         for (auto def : outParamDefs) {
-            //             auto push = cast<sigi::PushOp>(def);
-            //             newOuts.push_back(push.getValue());
-            //             newOutTypes.push_back(push.getValue().getType());
-            //         }
-            //     }
-            // }
-            LLVM_DEBUG(llvm::errs() << moduleOp);
-            return llvm::failure();
+            SmallVector<size_t> markForErasure;
+            if (inStack) {
+                for (size_t i = 0; i < entryBlock->getNumArguments(); i++) {
+                    if (entryBlock->getArgument(i) == inStack) {
+                        LLVM_DEBUG(llvm::errs() << "ERASE " << entryBlock->getArgument(i) << "\n");
+                        markForErasure.push_back(i);
+                    }
+                }
+
+                assert(
+                    markForErasure.size() <= 1
+                    && "Can not erase multiple Stacks. Only one Stack Supported.");
+                for (auto eraseIdx : markForErasure) {
+                    // DOES THIS CIRCUMVENT LISTENERS ATTACHED TO REWRITER??
+                    entryBlock->eraseArgument(eraseIdx);
+                }
+
+                SmallVector<Type> newInTypes;
+                SmallVector<Location> newInLocs;
+                for (auto oldIn : funcOp.getFunctionType().getInputs()) {
+                    if (llvm::isa<sigi::StackType>(oldIn))
+                        for (auto newIn : stackFuncType.getInputs()) {
+                            newInLocs.push_back(funcOp->getLoc());
+                            newInTypes.push_back(newIn);
+                        }
+                    else {
+                        newInTypes.push_back(oldIn);
+                        newInLocs.push_back(funcOp->getLoc());
+                    }
+                }
+
+                rewriter.setInsertionPointAfter(globalStackOp);
+                Value currentStack = globalStackOp.getResult();
+                entryBlock->addArguments(newInTypes, newInLocs);
+                for (auto arg : entryBlock->getArguments()) {
+                    auto paramPush = rewriter.create<sigi::PushOp>(
+                        funcOp->getLoc(),
+                        sigi::StackType::get(funcOp->getContext()),
+                        currentStack,
+                        arg);
+                    currentStack = paramPush.getOutStack();
+                }
+
+                rewriter.replaceAllUsesExcept(
+                    globalStackOp.getResult(),
+                    currentStack,
+                    globalStackOp->getNextNode());
+            }
+
+            // i32 i32 i32 -> i32 i1 closure
+            // push i32 
+            // push i1
+            // push closure
+            // pop closure
+            // pop i1
+            // pop i32 
+            if(outStack) {
+                rewriter.setInsertionPoint(returnOp);
+                Value currentStack = outStack;
+                SmallVector<Value> newResults;
+                for(auto results : outputs) {
+                    auto resultPop  = rewriter.create<sigi::PopOp>(funcOp.getLoc(), sigi::StackType::get(funcOp->getContext()), results, currentStack);
+                    currentStack = resultPop.getOutStack();
+                    newResults.push_back(resultPop.getValue());
+                }
+                auto newReturn = rewriter.create<func::ReturnOp>(funcOp->getLoc(), newResults);
+                rewriter.replaceOp(returnOp, newReturn);
+                returnOp = newReturn;
+            }
+
+            SmallVector<Type> newInTypes{entryBlock->getArgumentTypes()};
+            SmallVector<Type> newOutTypes{returnOp->getOperandTypes()};
+            FunctionType newFunctionType =
+                FunctionType::get(funcOp->getContext(), newInTypes, newOutTypes);
+            rewriter.modifyOpInPlace(funcOp, [&]() { funcOp.setFunctionType(newFunctionType); });
+
+            return llvm::success();
         }
     };
 

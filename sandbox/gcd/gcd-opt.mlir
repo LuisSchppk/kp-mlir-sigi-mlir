@@ -1,22 +1,22 @@
 module {
-  func.func private @"sigi::pp"(!sigi.stack) -> !sigi.stack attributes {sigi.builtinfunc}
-  func.func private @gcd(%arg0: !sigi.stack) -> !sigi.stack attributes {sigi.stackType = (i32, i32) -> i32} {
-    %c0_i32 = arith.constant 0 : i32
-    %out_stack, %value = sigi.pop %arg0 : i32
-    %out_stack_0, %value_1 = sigi.pop %out_stack : i32
-    %0 = arith.cmpi eq, %value, %c0_i32 : i32
-    %1 = scf.if %0 -> (!sigi.stack) {
-      %2 = sigi.push %out_stack_0, %value_1 : i32
-      scf.yield %2 : !sigi.stack
-    } else {
-      %2 = sigi.push %out_stack_0, %value : i32
-      %3 = arith.remui %value_1, %value : i32
-      %4 = sigi.push %2, %3 : i32
-      %5 = func.call @gcd(%4) {sigi.stackType = (i32, i32) -> i32} : (!sigi.stack) -> !sigi.stack
-      scf.yield %5 : !sigi.stack
-    }
-    return %1 : !sigi.stack
-  }
+  // func.func private @"sigi::pp"(!sigi.stack) -> !sigi.stack attributes {sigi.builtinfunc}
+  // func.func private @gcd(%arg0: !sigi.stack) -> !sigi.stack attributes {sigi.stackType = (i32, i32) -> i32} {
+  //   %c0_i32 = arith.constant 0 : i32
+  //   %out_stack, %value = sigi.pop %arg0 : i32
+  //   %out_stack_0, %value_1 = sigi.pop %out_stack : i32
+  //   %0 = arith.cmpi eq, %value, %c0_i32 : i32
+  //   %1 = scf.if %0 -> (!sigi.stack) {
+  //     %2 = sigi.push %out_stack_0, %value_1 : i32
+  //     scf.yield %2 : !sigi.stack
+  //   } else {
+  //     %2 = sigi.push %out_stack_0, %value : i32
+  //     %3 = arith.remui %value_1, %value : i32
+  //     %4 = sigi.push %2, %3 : i32
+  //     %5 = func.call @gcd(%4) {sigi.stackType = (i32, i32) -> i32} : (!sigi.stack) -> !sigi.stack
+  //     scf.yield %5 : !sigi.stack
+  //   }
+  //   return %1 : !sigi.stack
+  // }
   // func.func @__main__(%arg0: !sigi.stack) -> !sigi.stack attributes {sigi.main, sigi.stackType = () -> ()} {
   //   %c8_i32 = arith.constant 8 : i32
   //   %c24_i32 = arith.constant 24 : i32
@@ -27,7 +27,6 @@ module {
   //   %out_stack, %value = sigi.pop %3 : i32
   //   return %out_stack : !sigi.stack
   // }
-
 
     func.func private @test(%arg0: !sigi.stack) -> !sigi.stack attributes {sigi.stackType = (i32, i32, i32) -> i32} {
     %c0_i32 = arith.constant 0 : i32
