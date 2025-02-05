@@ -1,8 +1,0 @@
-let gcd: int, int -> int=
-    -> a, b;
-    if (b = 0) 
-        a 
-    else 
-        b (a % b) gcd ;;
-
-24 8 gcd show
