@@ -38,7 +38,7 @@ module {
             // %
             %s15, %v12 = sigi.pop %s14: i32
             %s16, %v13 = sigi.pop %s15: i32
-            %v14 = arith.modi %v13, %v12: i32
+            %v14 = arith.remui %v13, %v12: i32
             %s17 = sigi.push %s16, %v14: i32
             %s18 = func.call @gcd(%s17) { sigi.stackType = (i32, i32) -> i32 } : (!sigi.stack) -> !sigi.stack // int, int -> int
             closure.return %s18: !sigi.stack

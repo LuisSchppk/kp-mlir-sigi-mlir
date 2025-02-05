@@ -22,5 +22,11 @@ bool sigi_pop_bool(sigi_stack_t* stack);
 // Prints the top but does not pop it.
 void sigi_print_stack_top_ln(sigi_stack_t*);
 
+void sigi_print_i32(int32_t);
+
+void sigi_print_bool(bool);
+
+void sigi_print_closure(closure_t* );
+
 // builtin implementations
 sigi_stack_t* sigi_builtin__pp(sigi_stack_t*);

@@ -1,15 +1,16 @@
 
 #include "sigi.h"
 
+#include <cstdint>
 #include <stdio.h>
 
-//#define DEBUG
+// #define DEBUG
 
 #ifdef DEBUG
 #    define DEBUG_PRINT(x) printf x
 #else
-#    define DEBUG_PRINT(x)                                                     \
-        do {                                                                   \
+#    define DEBUG_PRINT(x)                                                                         \
+        do {                                                                                       \
         } while (0)
 #endif
 
@@ -33,8 +34,7 @@ struct sigi_stack_impl {
 /// @brief Initialize an empty stack.
 void sigi_init_stack(sigi_stack_t* stack)
 {
-    struct sigi_stack_impl* impl =
-        (struct sigi_stack_impl*)malloc(sizeof(struct sigi_stack_impl));
+    struct sigi_stack_impl* impl = (struct sigi_stack_impl*)malloc(sizeof(struct sigi_stack_impl));
     impl->count = 0;
     impl->capacity = 4;
     impl->buffer = (sigi_value*)malloc(4 * sizeof(sigi_value));
@@ -54,10 +54,8 @@ void grow1(sigi_stack_t* stack, sigi_value new_value)
     struct sigi_stack_impl* impl = *stack;
     if (impl->count == impl->capacity) {
         size_t new_cap = impl->capacity * 2;
-        sigi_value* grown_buf =
-            (sigi_value*)realloc(impl->buffer, new_cap * sizeof(sigi_value));
-        if (NULL == grown_buf)
-            sigi_abort("Error (re)allocating memory for the stack");
+        sigi_value* grown_buf = (sigi_value*)realloc(impl->buffer, new_cap * sizeof(sigi_value));
+        if (NULL == grown_buf) sigi_abort("Error (re)allocating memory for the stack");
         impl->buffer = grown_buf;
         impl->capacity = new_cap;
     }
@@ -70,8 +68,7 @@ void grow1(sigi_stack_t* stack, sigi_value new_value)
 sigi_value* peek1(sigi_stack_t* stack)
 {
     struct sigi_stack_impl* impl = *stack;
-    if (impl->count == 0)
-        sigi_abort("Attempted to pop an element from an empty stack.");
+    if (impl->count == 0) sigi_abort("Attempted to pop an element from an empty stack.");
 
     return &impl->buffer[impl->count - 1];
 }
@@ -79,8 +76,7 @@ sigi_value* peek1(sigi_stack_t* stack)
 sigi_value pop1(sigi_stack_t* stack)
 {
     struct sigi_stack_impl* impl = *stack;
-    if (impl->count == 0)
-        sigi_abort("Attempted to pop an element from an empty stack.");
+    if (impl->count == 0) sigi_abort("Attempted to pop an element from an empty stack.");
 
     impl->count--;
     sigi_value top = impl->buffer[impl->count];
@@ -146,10 +142,23 @@ void sigi_print_stack_top_ln(sigi_stack_t* stack)
             printf("false\n");
         break;
     case TAG_I32: printf("%d\n", top->data.i32); break;
-    case TAG_CLOSURE:
-        printf("(opaque closure, rc=%d)\n", top->data.closure->refcount);
-        break;
+    case TAG_CLOSURE: printf("(opaque closure, rc=%d)\n", top->data.closure->refcount); break;
     }
+}
+
+void sigi_print_i32(int32_t integer) { printf("%d\n", integer); }
+
+void sigi_print_bool(bool boolean)
+{
+    if (boolean)
+        printf("true\n");
+    else
+        printf("false\n");
+}
+
+void sigi_print_closure(closure_t* closure)
+{
+    printf("(opaque closure, rc=%d)\n", closure->refcount);
 }
 
 sigi_stack_t* sigi_builtin__pp(sigi_stack_t* stack)

@@ -14,13 +14,22 @@ def ConvertSigiToLLVM : ConvertToLlvm<"Sigi", "sigi">;
 
 def TailRecursionPass : Pass<"detect-tail-rec", "func::FuncOp"> {
   let summary = "Detect tail recursions";
-   let dependentDialects = ["mlir::memref::MemRefDialect"];
+  let dependentDialects = ["mlir::memref::MemRefDialect"];
 //   let constructor = "mlir::sigi::createTailRecursionPass()";
 }
 
-def DestackPass : Pass<"destack", "func::FuncOp"> {
+def StackEliminationPass : Pass<"stack-elimination", "func::FuncOp"> {
   let summary = "Tries to remove stack as far as possible.";
 
+  // let constructor = "mlir::sigi::createDestackPass()";
+}
+
+def TypedBuiltInsPass : Pass<"typed-builtins", "func::CallOp"> {
+  let summary = "Replaces builtins that take stack and use single value";
+}
+
+def GlobalStackPass : Pass<"global-stack", "func::FuncOp"> {
+  let summary = "Inserts global reference to stack";
   // let constructor = "mlir::sigi::createDestackPass()";
 }
 

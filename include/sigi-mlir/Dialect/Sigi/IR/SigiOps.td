@@ -52,4 +52,14 @@ def PushOp : Sigi_Op<"push", [Pure]> {
     // let hasCustomAssemblyFormat = 1; 
 }
 
+def GetGlobalStack : Sigi_Op<"global"> {
+    let summary = "";
+    let description  = "";
+
+    // check that value has correct type in verifier ? 
+    let results = (outs Sigi_StackType:$global_stack);
+    // let hasCanonicalizeMethod = 1;
+    // let hasCustomAssemblyFormat = 1; 
+}
+
 #endif
