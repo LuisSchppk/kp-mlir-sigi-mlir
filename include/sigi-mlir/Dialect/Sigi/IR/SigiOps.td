@@ -48,7 +48,7 @@ def PushOp : Sigi_Op<"push", [Pure]> {
     let results = (outs Sigi_StackType:$out_stack);
     let assemblyFormat = "$in_stack `,` $value attr-dict `:` type($value)";
     let hasVerifier=1;
-    // let hasCanonicalizeMethod = 1;
+    let hasCanonicalizeMethod = 1;
     // let hasCustomAssemblyFormat = 1; 
 }
 

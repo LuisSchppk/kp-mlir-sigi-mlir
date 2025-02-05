@@ -23,6 +23,7 @@
 #include <mlir/IR/Diagnostics.h>
 #include <mlir/IR/Location.h>
 #include <mlir/IR/Value.h>
+#include <mlir/Interfaces/ControlFlowInterfaces.h>
 
 #define DEBUG_TYPE "sigi-ops"
 
@@ -58,15 +59,9 @@ LogicalResult verifySigiOperandType(Value element)
     return valid ? LogicalResult::success() : LogicalResult::failure();
 }
 
-LogicalResult PopOp::verify()
-{
-    return verifySigiOperandType(PopOp::getValue());
-}
+LogicalResult PopOp::verify() { return verifySigiOperandType(PopOp::getValue()); }
 
-LogicalResult PushOp::verify()
-{
-    return verifySigiOperandType(PushOp::getValue());
-}
+LogicalResult PushOp::verify() { return verifySigiOperandType(PushOp::getValue()); }
 
 LogicalResult PopOp::canonicalize(PopOp op, ::mlir::PatternRewriter &rewriter)
 {
@@ -80,16 +75,26 @@ LogicalResult PopOp::canonicalize(PopOp op, ::mlir::PatternRewriter &rewriter)
         auto value = definingPush.getValue();
         auto originalStack = definingPush.getInStack();
 
-        // only replace pop -> if push is dead it will get folded by mlir 
+        // only replace pop -> if push is dead it will get folded by mlir
         rewriter.replaceOp(op, {originalStack, value});
         return llvm::success();
     }
 
+    // if (op.getValue().use_empty()) {
+    //     auto inStack = op.getInStack();
+    //     rewriter.replaceAllUsesWith(op.getOutStack(), op.getInStack());
+    //     return llvm::failure();
+    // }
+
     return llvm::failure();
 }
 
-// LogicalResult PushOp::canonicalize(PushOp op, ::mlir::PatternRewriter &rewriter)
-// {
-
-//     return llvm::success();
-// }
+LogicalResult PushOp::canonicalize(PushOp op, ::mlir::PatternRewriter &rewriter)
+{
+    // if (op.getOutStack().hasOneUse()
+    //     && llvm::isa<scf::YieldOp>(op.getOutStack().getUses().begin()->getOwner())) {
+        
+    //     return llvm::success();
+    // }
+    return llvm::failure();
+}
