@@ -148,110 +148,13 @@ struct StackEliminationPass
             auto outStacks = getStackFrom(returnOp->getOperands());
 
             if (inStacks.size() > 1 || outStacks.size() > 1) return llvm::failure();
-            Value inStack;
-            Value outStack;
+            Value inStack = inStacks.empty() ? NULL : inStacks.front();
+            Value outStack = outStacks.empty() ? NULL :outStacks.front();
 
-            SmallVector<Operation*> stack;
-
-            if (!inStacks.empty()) {
-                inStack = inStacks.front();
-                for (auto &use : inStack.getUses())
-                    if (use.getOwner()) stack.push_back(use.getOwner());
-
-                while (!stack.empty() && stackParameter.size() < inputs.size()) {
-                    auto current = stack.pop_back_val();
-                    if (auto pop = llvm::dyn_cast<sigi::PopOp>(current)) {
-                        assert(
-                            pop.getValue().getType() == inputs[stackParameter.size()]
-                            && "Input Parameter has wrong type.");
-
-                        if (stackParameter.contains(pop.getInStack())) {
-                            auto ops = stackParameter[pop.getInStack()];
-                            ops.push_back(pop.getOperation());
-                            stackParameter[pop.getInStack()] = ops;
-                        } else {
-                            stackParameter.insert({pop.getInStack(), {pop.getOperation()}});
-                        }
-
-                        for (auto &use : pop.getOutStack().getUses())
-                            if (use.getOwner()) stack.push_back(use.getOwner());
-
-                    } else if (auto ifOp = llvm::dyn_cast<scf::IfOp>(current)) {
-                        // NEVER THE CASE? NO WAY TO EVALUATE stack to i1
-                    } else {
-                        /*
-                         * Assumption: Dialects SCF, CF, Arith, Func, Sigi, Closure are allowed.
-                         * SCF -> Possible to be ARG to For, While,... sp we fail.
-                         * CF -> No Possible Uses
-                         * Arith -> No Possible Uses
-                         * Func -> Return of Call -> Failure, try to convert other func first, what
-                         *          happens on f -> g && g -> f ?
-                         * Sigi -> only pop
-                         * Closure -> inlined by now? otherwise fail this optimization.
-                         */
-                        return llvm::failure();
-                    }
-                }
-            }
-
-            if (stackParameter.size() != inputs.size()) return llvm::failure();
-
-            stack.clear();
-
-            if (!outStacks.empty()) {
-                outStack = outStacks.front();
-                stack = {outStack.getDefiningOp()};
-                while (!stack.empty() && stackResults.size() < outputs.size()) {
-                    auto current = stack.pop_back_val();
-                    if (auto push = llvm::dyn_cast<sigi::PushOp>(current)) {
-                        assert(
-                            push.getValue().getType() == outputs[stackResults.size()]
-                            && "Output Parameter has wrong type.");
-
-                        if (stackResults.contains(push.getOutStack())) {
-                            auto ops = stackResults[push.getOutStack()];
-                            ops.push_back(push.getOperation());
-                            stackResults[push.getOutStack()] = ops;
-                        } else {
-                            stackResults.insert({push.getInStack(), {push.getOperation()}});
-                        }
-                        stack.push_back(push.getInStack().getDefiningOp());
-                    } else if (auto ifOp = llvm::dyn_cast<scf::IfOp>(current)) {
-                        for (auto sigiStack : getStackFrom(ifOp.elseYield()->getOperands()))
-                            stack.push_back(sigiStack.getDefiningOp());
-
-                        for (auto sigiStack : getStackFrom(ifOp.thenYield()->getOperands()))
-                            stack.push_back(sigiStack.getDefiningOp());
-
-                    } else if (stack.empty()) {
-                        return llvm::failure();
-                    }
-                }
-            }
-
-            if (stackResults.size() != outputs.size()) return llvm::failure();
-
-            SmallVector<Operation*> allParamPops = mergeAndSort(stackParameter);
-            SmallVector<Operation*> allResultPushes = mergeAndSort(stackResults);
-
-            // bool globalStackNecessary = isGlobalStackNecessary(funcOp, inParamDefs,
-            // outParamDefs);
             Operation* op_getGlobalStack = nullptr;
             funcOp->walk([&](sigi::GetGlobalStack op) { op_getGlobalStack = op.getOperation(); });
 
             LLVM_DEBUG(llvm::errs() << " MATCH SUCCESS \n");
-            // MATCH DONE
-
-            /*
-             * 1. Adjust Call sites -> What happens to call sites outside of module?
-             *          Trust Process: Additional Rewrite for all func.calls to external where the
-             *                      Call gets adjusted to meet the stackTypes
-             *          Safety: for funcOps within module where we did not achieve this fix with
-             *                  global stack
-             * 2. Erase old push & pop
-             * 3. Insert global stack where needed
-             * 4. Implement Safety for (1).
-             */
 
             if (!op_getGlobalStack) {
                 rewriter.setInsertionPointToStart(entryBlock);
@@ -335,6 +238,7 @@ struct StackEliminationPass
                     currentStack = resultPop.getOutStack();
                     newResults.push_back(resultPop.getValue());
                 }
+                newResults = {llvm::reverse(newResults).begin(), llvm::reverse(newResults).end()};
                 auto newReturn = rewriter.create<func::ReturnOp>(funcOp->getLoc(), newResults);
                 rewriter.replaceOp(returnOp, newReturn);
                 returnOp = newReturn;
