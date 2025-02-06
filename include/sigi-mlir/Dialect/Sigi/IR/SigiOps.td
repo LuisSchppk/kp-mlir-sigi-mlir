@@ -52,7 +52,7 @@ def PushOp : Sigi_Op<"push", [Pure]> {
     // let hasCustomAssemblyFormat = 1; 
 }
 
-def GetGlobalStack : Sigi_Op<"global"> {
+def GetGlobalStack : Sigi_Op<"global", [Pure]> {
     let summary = "";
     let description  = "";
 

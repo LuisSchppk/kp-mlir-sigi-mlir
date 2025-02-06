@@ -49,8 +49,9 @@ namespace {
 
 std::string has_global_stack = "has-global-stack";
 std::string stack_type_attr = "sigi.stackType";
+std::string sigi_builtin = "sigi.builtinfunc";
 
-struct StackEliminationPass
+    struct StackEliminationPass
         : public mlir::sigi::impl::StackEliminationPassBase<StackEliminationPass> {
 
     template<typename R>
@@ -82,7 +83,7 @@ struct StackEliminationPass
             LLVM_DEBUG(llvm::errs() << "ENTERED CLEAN UP CALLSITE AT " << callOp->getLoc() << "\n");
 
             // FAILURE 1
-            if (!callOp->hasAttr(stack_type_attr)
+            if (!callOp->hasAttr(stack_type_attr) 
                 || !(
                     llvm::is_contained(
                         callOp.getCalleeType().getInputs(),
@@ -97,6 +98,13 @@ struct StackEliminationPass
             auto inStacks = getStackFrom(callOp.getOperands());
             auto outStacks = getStackFrom(callOp->getResults());
             if (inStacks.size() > 1 || outStacks.size() > 1) return llvm::failure();
+
+            auto callee = SymbolTable::lookupSymbolIn(callOp->getParentOfType<ModuleOp>(), callOp.getCalleeAttr());
+            if(auto funcOp = dyn_cast<func::FuncOp>(callee)) {
+                if(funcOp->hasAttr(sigi_builtin)) return llvm::failure();
+            } else {
+                return llvm::failure();
+            }
 
             auto stackTypeAttr = llvm::cast<TypeAttr>(callOp->getAttr(stack_type_attr));
             auto stackFuncType = cast<FunctionType>(stackTypeAttr.getValue());
@@ -159,14 +167,12 @@ struct StackEliminationPass
                 }
 
                 SmallVector<Type> newResultType;
-                for(auto resultType : callOp->getResultTypes()) {
-                    if(llvm::isa<sigi::StackType>(resultType)) {
-                        for(auto stackType : stackFuncType.getResults()) {
+                for (auto resultType : callOp->getResultTypes()) {
+                    if (llvm::isa<sigi::StackType>(resultType))
+                        for (auto stackType : stackFuncType.getResults())
                             newResultType.push_back(stackType);
-                        }
-                    } else {
+                    else
                         newResultType.push_back(resultType);
-                    }
                 }
 
                 auto newCall = rewriter.create<func::CallOp>(
@@ -174,7 +180,7 @@ struct StackEliminationPass
                     callOp.getCalleeAttr(),
                     newResultType,
                     newOperands);
-                    
+
                 for (auto result : newCall->getResults()) {
                     auto resultPush = rewriter.create<sigi::PushOp>(
                         encompassingFunc->getLoc(),
@@ -188,11 +194,13 @@ struct StackEliminationPass
                 SmallVector<Value> newResults = {newCall->getResults()};
                 IRMapping oldToNew;
                 int newIdx = 0;
-                for(auto result : oldResults) {
-                    if(result == outStack) {
-                        newIdx+=outputs.size();
+                for (auto result : oldResults) {
+                    if (result == outStack) {
+                        newIdx += outputs.size();
                     } else {
-                        assert((size_t)newIdx < newResults.size() - 1 && "\nINDEX OVERFLOW AT OLD TO NEW MAPPING\n");
+                        assert(
+                            (size_t)newIdx < newResults.size() - 1
+                            && "\nINDEX OVERFLOW AT OLD TO NEW MAPPING\n");
                         rewriter.replaceAllUsesWith(result, newResults[newIdx]);
                     }
                 }
