@@ -26,8 +26,7 @@ struct CalledBoxOpSelectToIf : OpRewritePattern<closure::CallOp> {
 public:
     using OpRewritePattern<closure::CallOp>::OpRewritePattern;
 
-    LogicalResult matchAndRewrite(closure::CallOp op, PatternRewriter &rewriter)
-        const override
+    LogicalResult matchAndRewrite(closure::CallOp op, PatternRewriter &rewriter) const override
     {
         auto definingOp = op.getCallee().getDefiningOp();
         if (definingOp == nullptr) {
@@ -40,6 +39,7 @@ public:
             // Construct skeleton for IfOp.
             auto thenOp = selectOp.getTrueValue().getDefiningOp();
             auto elseOp = selectOp.getFalseValue().getDefiningOp();
+            rewriter.setInsertionPoint(selectOp);
             auto ifOp = rewriter.create<scf::IfOp>(
                 selectOp->getLoc(),
                 op.getResultTypes(),
@@ -79,8 +79,8 @@ public:
         } else {
             auto parentOp = definingOp->getParentOfType<func::FuncOp>();
             LLVM_DEBUG(
-                llvm::errs() << "Cast to select failed on "
-                             << definingOp->getName()
+                llvm::errs() << "Cast to select failed on " << definingOp->getName() << " at "
+                             << definingOp->getLoc()
                              // << " in " << parentOp
                              << "\n");
         }
@@ -91,8 +91,7 @@ public:
 
 namespace {
 struct PrepareClosureInline
-        : public mlir::closure::impl::PrepareClosureInlineBase<
-              PrepareClosureInline> {
+        : public mlir::closure::impl::PrepareClosureInlineBase<PrepareClosureInline> {
 
     void runOnOperation() override
     {
@@ -110,14 +109,24 @@ struct ClosureInline : public closure::impl::ClosureInlineBase<ClosureInline> {
         mlir::OpPassManager closureInlinePM(moduleOp.getOperationName());
         closureInlinePM.addPass(mlir::createInlinerPass());
         closureInlinePM.addPass(mlir::createCanonicalizerPass());
-        closureInlinePM.addNestedPass<func::FuncOp>(
-            closure::createPrepareClosureInline());
+        closureInlinePM.addNestedPass<func::FuncOp>(closure::createPrepareClosureInline());
         closureInlinePM.addPass(mlir::createCanonicalizerPass());
-        closureInlinePM.addPass(mlir::createInlinerPass());
+        closureInlinePM.addPass(mlir::createCompositeFixedPointPass(
+            "repeated-inline",
+            [](mlir::OpPassManager &pm) { pm.addPass(createInlinerPass()); },
+            10));
+
         if (mlir::failed(runPipeline(closureInlinePM, moduleOp))) {
             moduleOp.emitError("Failed to run ClosureInline Pipeline.");
             signalPassFailure();
         }
+
+        moduleOp.walk([&](Operation* op) {
+            if (isa<closure::BoxOp>(op)) {
+                LLVM_DEBUG(
+                    llvm::errs() << "Reached end of iterations before all BoxOps were inlined.\n");
+            }
+        });
     }
 };
 } // namespace

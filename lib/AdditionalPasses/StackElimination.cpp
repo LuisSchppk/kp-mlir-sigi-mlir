@@ -17,6 +17,7 @@
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/IR/Attributes.h>
+#include <mlir/IR/BuiltinAttributeInterfaces.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/IRMapping.h>
@@ -25,6 +26,7 @@
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/IR/Operation.h>
 #include <mlir/IR/PatternMatch.h>
+#include <mlir/IR/SymbolTable.h>
 #include <mlir/IR/Value.h>
 #include <mlir/IR/ValueRange.h>
 #include <mlir/Interfaces/ControlFlowInterfaces.h>
@@ -47,11 +49,10 @@ namespace mlir::closure {}
 using namespace mlir;
 namespace {
 
-std::string has_global_stack = "has-global-stack";
 std::string stack_type_attr = "sigi.stackType";
 std::string sigi_builtin = "sigi.builtinfunc";
 
-    struct StackEliminationPass
+struct StackEliminationPass
         : public mlir::sigi::impl::StackEliminationPassBase<StackEliminationPass> {
 
     template<typename R>
@@ -83,7 +84,7 @@ std::string sigi_builtin = "sigi.builtinfunc";
             LLVM_DEBUG(llvm::errs() << "ENTERED CLEAN UP CALLSITE AT " << callOp->getLoc() << "\n");
 
             // FAILURE 1
-            if (!callOp->hasAttr(stack_type_attr) 
+            if (!callOp->hasAttr(stack_type_attr)
                 || !(
                     llvm::is_contained(
                         callOp.getCalleeType().getInputs(),
@@ -99,9 +100,11 @@ std::string sigi_builtin = "sigi.builtinfunc";
             auto outStacks = getStackFrom(callOp->getResults());
             if (inStacks.size() > 1 || outStacks.size() > 1) return llvm::failure();
 
-            auto callee = SymbolTable::lookupSymbolIn(callOp->getParentOfType<ModuleOp>(), callOp.getCalleeAttr());
-            if(auto funcOp = dyn_cast<func::FuncOp>(callee)) {
-                if(funcOp->hasAttr(sigi_builtin)) return llvm::failure();
+            auto callee = SymbolTable::lookupSymbolIn(
+                callOp->getParentOfType<ModuleOp>(),
+                callOp.getCalleeAttr());
+            if (auto funcOp = dyn_cast<func::FuncOp>(callee)) {
+                if (funcOp->hasAttr(sigi_builtin)) return llvm::failure();
             } else {
                 return llvm::failure();
             }
@@ -221,13 +224,59 @@ std::string sigi_builtin = "sigi.builtinfunc";
         };
     };
 
+    struct AdaptExternal : OpRewritePattern<func::FuncOp> {
+        using OpRewritePattern<func::FuncOp>::OpRewritePattern;
+
+        LogicalResult matchAndRewrite(func::FuncOp funcOp, PatternRewriter &rewriter) const override
+        {
+            LLVM_DEBUG(llvm::errs() << "ENTERED EXTERNAL ON " << funcOp.getSymName() << "\n");
+            if (!funcOp.isExternal()
+                || !(
+                    llvm::is_contained(
+                        funcOp.getFunctionType().getInputs(),
+                        sigi::StackType::get(funcOp->getContext()))
+                    || llvm::is_contained(
+                        funcOp.getFunctionType().getResults(),
+                        sigi::StackType::get(funcOp->getContext()))))
+                return llvm::failure();
+
+            LLVM_DEBUG(llvm::errs() << "EXTERNAL MATCH DONE\n");
+            Operation* call = nullptr;
+            funcOp->getParentOfType<ModuleOp>()->walk([&](func::CallOp callOp) {
+                if (!call && callOp->hasAttr(stack_type_attr)
+                    && SymbolTable::lookupSymbolIn(
+                           funcOp->getParentOfType<ModuleOp>(),
+                           callOp.getCalleeAttr())
+                           == funcOp) {
+                    call = callOp.getOperation();
+                }
+            });
+            if (!call) return llvm::failure();
+
+            auto stackTypeAttr = llvm::cast<TypeAttr>(call->getAttr("sigi.stackType"));
+            auto stackFuncType = cast<FunctionType>(stackTypeAttr.getValue());
+            rewriter.setInsertionPoint(funcOp);
+            auto newExternalFunc = rewriter.create<func::FuncOp>(
+                funcOp->getLoc(),
+                funcOp.getSymNameAttr(),
+                stackFuncType);
+
+            auto visibility_private = SymbolTable::Visibility::Private;
+            newExternalFunc.setVisibility(visibility_private);
+            rewriter.replaceOp(funcOp, newExternalFunc);
+            LLVM_DEBUG(llvm::errs() << "EXTERNAL DONE\n");
+            LLVM_DEBUG(llvm::errs() << newExternalFunc->getParentOfType<ModuleOp>() << "\n");
+            return llvm::success();
+        }
+    };
+
     struct EliminateStack : OpRewritePattern<func::FuncOp> {
         using OpRewritePattern<func::FuncOp>::OpRewritePattern;
 
         LogicalResult matchAndRewrite(func::FuncOp funcOp, PatternRewriter &rewriter) const override
         {
             LLVM_DEBUG(llvm::errs() << " ENTERED REWRITE ON " << funcOp.getSymName() << "\n");
-            if (!funcOp->hasAttr("sigi.stackType")
+            if (!funcOp->hasAttr(stack_type_attr)
                 || !(
                     llvm::is_contained(
                         funcOp.getFunctionType().getInputs(),
@@ -313,7 +362,8 @@ std::string sigi_builtin = "sigi.builtinfunc";
                 rewriter.setInsertionPointAfter(globalStackOp);
                 Value currentStack = globalStackOp.getResult();
                 entryBlock->addArguments(newInTypes, newInLocs);
-                for (auto arg : entryBlock->getArguments()) {
+                for (int i = entryBlock->getNumArguments() -1 ; i >= 0; i--) {
+                    auto arg = entryBlock->getArgument(i);
                     auto paramPush = rewriter.create<sigi::PushOp>(
                         funcOp->getLoc(),
                         sigi::StackType::get(funcOp->getContext()),
@@ -371,10 +421,27 @@ std::string sigi_builtin = "sigi.builtinfunc";
         GreedyRewriteConfig greedyConf;
         greedyConf.strictMode = GreedyRewriteStrictness::ExistingOps;
         patterns.add<EliminateStack>(&getContext());
+        patterns.add<AdaptExternal>(&getContext());
         callPatterns.add<AdaptCallSite>(&getContext());
         SmallVector<Operation*> callOps;
+        SmallVector<Operation*> internalFuncOps;
+        SmallVector<Operation*> externalFuncOps;
+        SmallVector<Operation*> funcOps;
+
         getOperation().walk([&](func::CallOp callOp) { callOps.push_back(callOp.getOperation()); });
-        (void)applyOpPatternsAndFold({getOperation()}, std::move(patterns), greedyConf);
+        getOperation().walk([&](func::FuncOp funcOp) {
+            if (funcOp.isExternal()) {
+                LLVM_DEBUG(llvm::errs() << "EXTERNAL " << funcOp.getSymName() << "\n");
+                externalFuncOps.push_back(funcOp);
+            } else {
+                LLVM_DEBUG(llvm::errs() << "Internal " << funcOp.getSymName() << "\n");
+                internalFuncOps.push_back(funcOp);
+            }
+
+            if (!funcOp->hasAttr(sigi_builtin)) funcOps.push_back(funcOp);
+        });
+
+        (void)applyOpPatternsAndFold(funcOps, std::move(patterns), greedyConf);
         (void)applyOpPatternsAndFold(callOps, std::move(callPatterns), greedyConf);
     }
 };

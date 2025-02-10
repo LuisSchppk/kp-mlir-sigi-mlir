@@ -1,0 +1,15 @@
+let fizzbuzz: int, int -> = 
+    -> n, upperbound;
+    if(n <= upperbound)
+        if(n % 2 = 0)
+            if(n % 5 = 0)
+                -3 show
+            else
+                -2 show
+        else 
+            n show
+            (n + 1) upperbound fizzbuzz
+    else 
+        pass;;
+
+0 100 fizzbuzz

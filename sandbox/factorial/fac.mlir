@@ -1,20 +1,20 @@
 module {
     func.func private @"sigi::pp"(!sigi.stack) -> !sigi.stack attributes { sigi.builtinfunc }
     // apply: (-> int) -> int
-    func.func private @apply(%s0: !sigi.stack) -> !sigi.stack {
+    func.func private @apply(%s0: !sigi.stack) -> !sigi.stack attributes {sigi.stackType = (!closure.box<(!sigi.stack) -> !sigi.stack>) -> i32} {
         // -> \f;
         %s1, %v1_f = sigi.pop %s0: !closure.box<(!sigi.stack) -> !sigi.stack> // f: (-> int)
-        %s2 = closure.call %v1_f (%s1) : !closure.box<(!sigi.stack) -> !sigi.stack> // call f: -> int
+        %s2 = closure.call %v1_f (%s1) { sigi.stackType = () -> i32 } : !closure.box<(!sigi.stack) -> !sigi.stack> // call f: -> int
         return %s2: !sigi.stack
     }
     // show: int ->
-    func.func private @show(%s0: !sigi.stack) -> !sigi.stack {
-        %s1 = func.call @"sigi::pp"(%s0) : (!sigi.stack) -> !sigi.stack // int -> int
+    func.func private @show(%s0: !sigi.stack) -> !sigi.stack attributes {sigi.stackType = (i32) -> ()} {
+        %s1 = func.call @"sigi::pp"(%s0) { sigi.stackType = (i32) -> i32 } : (!sigi.stack) -> !sigi.stack // int -> int
         %s2, %v1 = sigi.pop %s1: i32 // pop intrinsic
         return %s2: !sigi.stack
     }
     // factorial: int -> int
-    func.func private @factorial(%s0: !sigi.stack) -> !sigi.stack {
+    func.func private @factorial(%s0: !sigi.stack) -> !sigi.stack attributes {sigi.stackType = (i32) -> i32} {
         // -> n;
         %s1, %v1_n = sigi.pop %s0: i32 // n: int
         %s2 = sigi.push %s1, %v1_n: i32 // push n
@@ -25,13 +25,13 @@ module {
         %s5, %v4 = sigi.pop %s4: i32
         %v5 = arith.cmpi "eq", %v4, %v3: i32
         %s6 = sigi.push %s5, %v5: i1
-        %v6 = closure.box [] (%s7 : !sigi.stack) -> !sigi.stack { // -> int
+        %v6 = closure.box [] (%s7 : !sigi.stack) -> !sigi.stack attributes { sigi.stackType = () -> i32 } { // -> int
             %v7 = arith.constant 1: i32
             %s8 = sigi.push %s7, %v7: i32
             closure.return %s8: !sigi.stack
         }
         %s9 = sigi.push %s6, %v6: !closure.box<(!sigi.stack) -> !sigi.stack>
-        %v9 = closure.box [%v8_n = %v1_n : i32] (%s10 : !sigi.stack) -> !sigi.stack { // -> int
+        %v9 = closure.box [%v8_n = %v1_n : i32] (%s10 : !sigi.stack) -> !sigi.stack attributes { sigi.stackType = () -> i32 } { // -> int
             %s11 = sigi.push %s10, %v8_n: i32 // push n
             %s12 = sigi.push %s11, %v8_n: i32 // push n
             %v10 = arith.constant 1: i32
@@ -41,7 +41,7 @@ module {
             %s15, %v12 = sigi.pop %s14: i32
             %v13 = arith.subi %v12, %v11: i32
             %s16 = sigi.push %s15, %v13: i32
-            %s17 = func.call @factorial(%s16) : (!sigi.stack) -> !sigi.stack // int -> int
+            %s17 = func.call @factorial(%s16) { sigi.stackType = (i32) -> i32 } : (!sigi.stack) -> !sigi.stack // int -> int
             // *
             %s18, %v14 = sigi.pop %s17: i32
             %s19, %v15 = sigi.pop %s18: i32
@@ -60,15 +60,15 @@ module {
           scf.yield %v17: !closure.box<(!sigi.stack) -> !sigi.stack>
         }
         %s25 = sigi.push %s24, %v20: !closure.box<(!sigi.stack) -> !sigi.stack>
-        %s26 = func.call @apply(%s25) : (!sigi.stack) -> !sigi.stack // (-> int) -> int
+        %s26 = func.call @apply(%s25) { sigi.stackType = (!closure.box<(!sigi.stack) -> !sigi.stack>) -> i32 } : (!sigi.stack) -> !sigi.stack // (-> int) -> int
         return %s26: !sigi.stack
     }
     // __main__: ->
-    func.func @__main__(%s0: !sigi.stack) -> !sigi.stack attributes {sigi.main} {
+    func.func @__main__(%s0: !sigi.stack) -> !sigi.stack attributes {sigi.stackType = () -> (), sigi.main} {
         %v1 = arith.constant 5: i32
         %s1 = sigi.push %s0, %v1: i32
-        %s2 = func.call @factorial(%s1) : (!sigi.stack) -> !sigi.stack // int -> int
-        %s3 = func.call @show(%s2) : (!sigi.stack) -> !sigi.stack // int ->
+        %s2 = func.call @factorial(%s1) { sigi.stackType = (i32) -> i32 } : (!sigi.stack) -> !sigi.stack // int -> int
+        %s3 = func.call @show(%s2) { sigi.stackType = (i32) -> () } : (!sigi.stack) -> !sigi.stack // int ->
         return %s3: !sigi.stack
     }
 }

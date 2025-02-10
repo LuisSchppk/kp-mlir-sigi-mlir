@@ -26,7 +26,7 @@ include "mlir/IR/BuiltinTypes.td"
 // These ops are pure because they consume a stack and return a new one.
 // The implementation is not pure though.
 
-def PopOp : Sigi_Op<"pop", [Pure]> {
+def PopOp : Sigi_Op<"pop"> {
     let summary = "";
     let description  = "";
     let arguments = (ins Sigi_StackType:$in_stack);

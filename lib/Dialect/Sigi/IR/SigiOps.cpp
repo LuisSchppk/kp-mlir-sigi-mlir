@@ -83,6 +83,7 @@ LogicalResult PopOp::canonicalize(PopOp op, ::mlir::PatternRewriter &rewriter)
         auto originalStack = definingPush.getInStack();
 
         // only replace pop -> if push is dead it will get folded by mlir
+        LLVM_DEBUG(llvm::errs() << "\n REPLACING " << op << " WITH " << definingPush << "\n");
         rewriter.replaceOp(op, {originalStack, value});
         return llvm::success();
     }
@@ -119,7 +120,7 @@ bool containsReachablePop(Value startStack, Block* block)
 }
 
 LogicalResult PushOp::canonicalize(PushOp op, ::mlir::PatternRewriter &rewriter)
-{
+{   
     if (op.getOutStack().hasOneUse()
         && llvm::isa<scf::YieldOp>(op.getOutStack().getUses().begin()->getOwner())
         && llvm::isa<scf::IfOp>(op->getParentOp())

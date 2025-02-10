@@ -61,8 +61,7 @@ struct CanonicalizeClosure : OpRewritePattern<CallOp> {
 public:
     using OpRewritePattern<CallOp>::OpRewritePattern;
 
-    LogicalResult
-    matchAndRewrite(CallOp op, PatternRewriter &rewriter) const override
+    LogicalResult matchAndRewrite(CallOp op, PatternRewriter &rewriter) const override
     {
         auto callee = op.getCallee().getDefiningOp();
         if (callee == nullptr) {
@@ -84,7 +83,7 @@ public:
             return llvm::success();
         } else {
             LLVM_DEBUG(
-                llvm::errs() << "Cast to boxop failed. " << callee << " at "
+                llvm::errs() << "Cast to boxop failed. " << callee->getLoc() << " at "
                              << callee->getName() << "\n");
         }
         return failure();
@@ -97,77 +96,55 @@ public:
 
     bool debugIncludeMain = false;
 
-    bool isLegalToInline(Operation* call, Operation*, bool) const final override
-    {
-        bool isClosureOp = llvm::isa<closure::CallOp>(call);
-        //    || llvm::isa<closure::BoxOp>(call)
-        //    || llvm::isa<closure::ReturnOp>(call)
-        //    || llvm::isa<closure::DropOp>(call);
-        // if(!isClosureOp) {
-        //     LLVM_DEBUG(llvm::errs() << "Op not from closure for " <<
-        //     call->getName());
-        // }
-        return true;
-    }
+    bool isLegalToInline(Operation* call, Operation*, bool) const final override { return true; }
 
-    bool isLegalToInline(Region* region, Region*, bool, IRMapping &)
-        const final override
+    bool isLegalToInline(Region* region, Region*, bool, IRMapping &) const final override
     {
         return true;
     }
 
-    bool isLegalToInline(Operation* op, Region*, bool, IRMapping &)
-        const final override
-    {
-
-        bool isClosureOp = 
-                        llvm::isa<closure::CallOp>(op)
-                        //    || llvm::isa<closure::BoxOp>(op)
-                               || llvm::isa<closure::ReturnOp>(op)
-                           ||llvm::isa<closure::DropOp>(op);
-        if (!isClosureOp) {
-            LLVM_DEBUG(
-                llvm::errs()
-                << "Op not from closure for " << op->getName() << "\n");
-        }
-        return isClosureOp;
+    bool isLegalToInline(Operation* op, Region*, bool, IRMapping &) const final override
+    {  
+        bool isABoxOp = llvm::isa<closure::BoxOp>(op);
+        return !isABoxOp;
     }
 
-    void handleTerminator(Operation* op, ValueRange valuesToReplace)
-        const final override
+    void handleTerminator(Operation* op, ValueRange valuesToReplace) const final override
     {
+        LLVM_DEBUG(llvm::errs() << "[OP TO RANGE] ENTERED \n");
         if (auto returnOp = llvm::dyn_cast<ReturnOp>(*op)) {
-            for (auto [value, operand] :
-                 llvm::zip_equal(valuesToReplace, returnOp->getOperands())) {
+            for (auto [value, operand] : llvm::zip_equal(valuesToReplace, returnOp->getOperands()))
                 value.replaceAllUsesWith(operand);
-            }
         } else {
             LLVM_DEBUG(
                 llvm::errs()
-                << "Return op not from closure at" << op->getLoc() << "\n");
+                << "[OP TO RANGE] Return op not from closure at" << op->getLoc() << "\n");
         }
     }
 
     void handleTerminator(Operation* op, Block* newDest) const final override
     {
-        // Only return needs to be handled here.
+        LLVM_DEBUG(llvm::errs() << "[OP TO BLOCK] ENTERED \n");
         auto returnOp = dyn_cast<ReturnOp>(op);
-        if (!returnOp) return;
+        if (!returnOp) {
+            LLVM_DEBUG(
+                llvm::errs()
+                << "[OP TO BLOCK] Return op not from closure at" << op->getLoc() << "\n");
+            return;
+        }
 
-        // Replace the return with a branch to the dest.
         OpBuilder builder(op);
-        builder.create<cf::BranchOp>(
-            op->getLoc(),
-            newDest,
-            returnOp.getOperands());
-        op->erase();
+        builder.create<cf::BranchOp>(op->getLoc(), newDest, returnOp.getOperands());
+        // if (op->use_empty())
+        // op->erase();
+        // else
+        //     LLVM_DEBUG(llvm::errs() << "Uses for " << returnOp << " are not empty!");
     }
 };
 
 } // namespace mlir::closure
 
-void ClosureDialect::getCanonicalizationPatterns(
-    RewritePatternSet &result) const
+void ClosureDialect::getCanonicalizationPatterns(RewritePatternSet &result) const
 {
     result.add<::closure::CanonicalizeClosure>(result.getContext());
 }

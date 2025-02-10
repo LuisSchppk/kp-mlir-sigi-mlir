@@ -18,13 +18,13 @@ def TailRecursionPass : Pass<"detect-tail-rec", "func::FuncOp"> {
 //   let constructor = "mlir::sigi::createTailRecursionPass()";
 }
 
-def StackEliminationPass : Pass<"stack-elimination", "func::FuncOp"> {
+def StackEliminationPass : Pass<"stack-elimination",  "mlir::ModuleOp"> {
   let summary = "Tries to remove stack as far as possible.";
 
   // let constructor = "mlir::sigi::createDestackPass()";
 }
 
-def TypedBuiltInsPass : Pass<"typed-builtins", "func::CallOp"> {
+def TypedBuiltInsPass : Pass<"typed-builtins", "func::FuncOp"> {
   let summary = "Replaces builtins that take stack and use single value";
 }
 
