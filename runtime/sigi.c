@@ -1,7 +1,7 @@
 
 #include "sigi.h"
 
-#include <cstdint>
+// #include <cstdint>
 #include <stdio.h>
 
 // #define DEBUG
@@ -148,7 +148,7 @@ void sigi_print_stack_top_ln(sigi_stack_t* stack)
 
 void sigi_print_i32(int32_t integer) { printf("%d\n", integer); }
 
-void sigi_print_bool(bool boolean)
+void sigi_print_i1(bool boolean)
 {
     if (boolean)
         printf("true\n");
