@@ -68,7 +68,7 @@ struct InsertGlobalStack : OpRewritePattern<func::FuncOp> {
                 argStack = blockArg;
 
         rewriter.setInsertionPointToStart(&funcOp.getBlocks().front());
-        auto globalStack = rewriter.create<sigi::GetGlobalStack>(funcOp->getLoc(), stackType);
+        auto globalStack = rewriter.create<sigi::LoadGlobalStackOp>(funcOp->getLoc(), stackType);
         rewriter.replaceAllUsesWith(argStack, globalStack);
 
         rewriter.modifyOpInPlace(funcOp, [&]() {

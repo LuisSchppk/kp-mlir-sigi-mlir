@@ -20,6 +20,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/Debug.h>
+#include <llvm/Support/InitLLVM.h>
 #include <llvm/Support/LogicalResult.h>
 #include <llvm/Support/raw_ostream.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
@@ -56,6 +57,33 @@ void SigiDialect::registerOps()
         >();
 }
 
+Operation* buildNewIf(::mlir::PatternRewriter &rewriter, scf::IfOp oldIfOp, Location loc)
+{
+    SmallVector<Type> newResultsTypes{oldIfOp.thenYield()->getOperandTypes()};
+    scf::IfOp newIfOp =
+        rewriter.create<scf::IfOp>(loc, newResultsTypes, oldIfOp.getCondition(), true, true);
+
+    rewriter.moveBlockBefore(oldIfOp.thenBlock(), newIfOp.thenBlock());
+    rewriter.moveBlockBefore(oldIfOp.elseBlock(), newIfOp.elseBlock());
+    rewriter.eraseBlock(newIfOp.thenBlock());
+    rewriter.eraseBlock(newIfOp.elseBlock());
+    return newIfOp.getOperation();
+}
+
+bool containsReachablePop(Value startStack, Block* block)
+{
+    auto* next = startStack.getDefiningOp();
+    bool popReachable = false;
+    while (next && next->getBlock() == block)
+        if (auto pop = llvm::dyn_cast<PopOp>(next))
+            return true;
+        else if (auto push = llvm::dyn_cast<PushOp>(next))
+            next = push.getInStack().getDefiningOp();
+        else
+            return false;
+    return popReachable;
+}
+
 LogicalResult verifySigiOperandType(Value element)
 {
     bool valid = false;
@@ -85,48 +113,28 @@ LogicalResult PopOp::canonicalize(PopOp op, ::mlir::PatternRewriter &rewriter)
         // only replace pop -> if push is dead it will get folded by mlir
         LLVM_DEBUG(llvm::errs() << "\n REPLACING " << op << " WITH " << definingPush << "\n");
         rewriter.replaceOp(op, {originalStack, value});
+
+        bool allUsesAreStores = true;
+        LLVM_DEBUG(llvm::errs() << "CHECK ALL USES ARE STORE\n");
+        for (auto &use : definingPush.getOutStack().getUses())
+            allUsesAreStores &= llvm::isa<StoreGlobalStackOp>(use.getOwner());
+        if (allUsesAreStores || definingPush.getOutStack().use_empty())
+            rewriter.replaceOp(definingPush, definingPush.getInStack());
+
         return llvm::success();
     }
     return llvm::failure();
 }
 
-Operation* buildNewIf(::mlir::PatternRewriter &rewriter, scf::IfOp oldIfOp, Location loc)
-{
-    SmallVector<Type> newResultsTypes{oldIfOp.thenYield()->getOperandTypes()};
-    scf::IfOp newIfOp =
-        rewriter.create<scf::IfOp>(loc, newResultsTypes, oldIfOp.getCondition(), true, true);
-
-    rewriter.moveBlockBefore(oldIfOp.thenBlock(), newIfOp.thenBlock());
-    rewriter.moveBlockBefore(oldIfOp.elseBlock(), newIfOp.elseBlock());
-    rewriter.eraseBlock(newIfOp.thenBlock());
-    rewriter.eraseBlock(newIfOp.elseBlock());
-    return newIfOp.getOperation();
-}
-
-bool containsReachablePop(Value startStack, Block* block)
-{
-    auto* next = startStack.getDefiningOp();
-    bool popReachable = false;
-    while (next && next->getBlock() == block) {
-        if (auto pop = llvm::dyn_cast<PopOp>(next)) {
-            return true;
-        } else if (auto push = llvm::dyn_cast<PushOp>(next)) {
-            next = push.getInStack().getDefiningOp();
-        } else {
-            return false;
-        }
-    }
-    return popReachable;
-}
-
 LogicalResult PushOp::canonicalize(PushOp op, ::mlir::PatternRewriter &rewriter)
-{   
+{
     if (op.getOutStack().hasOneUse()
         && llvm::isa<scf::YieldOp>(op.getOutStack().getUses().begin()->getOwner())
         && llvm::isa<scf::IfOp>(op->getParentOp())
         && !containsReachablePop(op.getInStack(), op->getBlock())) {
         auto ifOp = cast<scf::IfOp>(op->getParentOp());
 
+        LLVM_DEBUG(llvm::errs() << "BEGIN ON \n" << ifOp << "\n");
         if (ifOp->getNumRegions() != 2) return llvm::failure();
 
         auto firstYield = cast<scf::YieldOp>(op.getOutStack().getUses().begin()->getOwner());
@@ -138,11 +146,14 @@ LogicalResult PushOp::canonicalize(PushOp op, ::mlir::PatternRewriter &rewriter)
                 otherOutStack = operand;
                 ++stackCount;
             }
+            if (stackCount != 1) return llvm::failure();
         }
 
-        if (stackCount != 1) return llvm::failure();
-
-        if (otherOutStack.hasOneUse() && llvm::isa<sigi::PushOp>(otherOutStack.getDefiningOp())) {
+        if (otherOutStack.hasOneUse() && llvm::isa<sigi::PushOp>(otherOutStack.getDefiningOp())
+            && (otherOutStack.getDefiningOp()->getParentOp() != ifOp
+                || !containsReachablePop(
+                    otherOutStack,
+                    otherOutStack.getDefiningOp()->getBlock()))) {
             auto otherPush = cast<PushOp>(otherOutStack.getDefiningOp());
             SmallVector<Value> newOperandsFirst = firstYield->getOperands();
             SmallVector<Value> newOperandsOther = otherYield->getOperands();
@@ -164,6 +175,8 @@ LogicalResult PushOp::canonicalize(PushOp op, ::mlir::PatternRewriter &rewriter)
             rewriter.modifyOpInPlace(otherYield, [&]() {
                 otherYield->setOperands(newOperandsOther);
             });
+
+            LLVM_DEBUG(llvm::errs() << "INTERMEDIARY 1. \n" << ifOp << "\n");
 
             assert(
                 firstYield->getOperandTypes() == otherYield->getOperandTypes()
@@ -211,6 +224,47 @@ LogicalResult PushOp::canonicalize(PushOp op, ::mlir::PatternRewriter &rewriter)
             rewriter.eraseOp(ifOp);
             return llvm::success();
         }
+    }
+    return llvm::failure();
+}
+
+LogicalResult
+LoadGlobalStackOp::canonicalize(LoadGlobalStackOp op, ::mlir::PatternRewriter &rewriter)
+{
+    return llvm::failure();
+}
+
+LogicalResult
+StoreGlobalStackOp::canonicalize(StoreGlobalStackOp op, ::mlir::PatternRewriter &rewriter)
+{
+    bool allUsesAreStores = true;
+
+    for (auto &use : op.getInStack().getUses())
+        allUsesAreStores &= llvm::isa<StoreGlobalStackOp>(use.getOwner());
+
+    if (allUsesAreStores && llvm::isa<LoadGlobalStackOp>(op.getInStack().getDefiningOp())) {
+        rewriter.eraseOp(op);
+        return llvm::success();
+    } else if (allUsesAreStores && llvm::isa<scf::IfOp>(op.getInStack().getDefiningOp())) {
+
+        // NOT SURE IF THIS IS A CANONICALIZATION PATTERN -> NON MONOTON.
+        auto ifOp = cast<scf::IfOp>(op.getInStack().getDefiningOp());
+        auto thenYield = ifOp.thenYield();
+        auto elseYield = ifOp.elseYield();
+        IRMapping ifToThen;
+        IRMapping ifToElse;
+
+        ifToThen.map(ifOp->getResults(), thenYield->getOperands());
+        ifToElse.map(ifOp->getResults(), elseYield->getOperands());
+
+        rewriter.setInsertionPoint(thenYield);
+        rewriter.clone(*op.getOperation(), ifToThen);
+
+        rewriter.setInsertionPoint(elseYield);
+        rewriter.clone(*op.getOperation(), ifToElse);
+
+        rewriter.eraseOp(op);
+        return llvm::success();
     }
     return llvm::failure();
 }

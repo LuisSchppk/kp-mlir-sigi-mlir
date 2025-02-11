@@ -39,7 +39,7 @@ def PopOp : Sigi_Op<"pop"> {
     // let hasCustomAssemblyFormat = 1;
 }
 
-def PushOp : Sigi_Op<"push", [Pure]> {
+def PushOp : Sigi_Op<"push"> {
     let summary = "";
     let description  = "";
     let arguments = (ins Sigi_StackType:$in_stack, AnyType:$value);
@@ -52,14 +52,22 @@ def PushOp : Sigi_Op<"push", [Pure]> {
     // let hasCustomAssemblyFormat = 1; 
 }
 
-def GetGlobalStack : Sigi_Op<"global", [Pure]> {
+def LoadGlobalStackOp : Sigi_Op<"load.global", [Pure]> {
     let summary = "";
     let description  = "";
 
     // check that value has correct type in verifier ? 
     let results = (outs Sigi_StackType:$global_stack);
+    let hasCanonicalizeMethod = 1;
     // let hasCanonicalizeMethod = 1;
     // let hasCustomAssemblyFormat = 1; 
+}
+
+def StoreGlobalStackOp : Sigi_Op<"store.global"> {
+    let summary = "";
+    let description  = "";
+    let arguments = (ins Sigi_StackType:$in_stack);
+    let hasCanonicalizeMethod = 1;
 }
 
 #endif

@@ -1,0 +1,10 @@
+let fillStack: int -> int, int = 
+    -> n;
+    if (n >= 20)
+        pass
+    else
+        n*2
+        n+1
+        fillStack;;
+
+0 fillStack show
