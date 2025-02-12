@@ -28,9 +28,4 @@ def TypedBuiltInsPass : Pass<"typed-builtins", "func::FuncOp"> {
   let summary = "Replaces builtins that take stack and use single value";
 }
 
-def GlobalStackPass : Pass<"global-stack", "func::FuncOp"> {
-  let summary = "Inserts global reference to stack";
-  // let constructor = "mlir::sigi::createDestackPass()";
-}
-
 #endif // SIGI_CONVERSION_PASSES

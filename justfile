@@ -65,8 +65,7 @@ llvmDialectIntoExecutable FILE:
     {{llvm_prefix}}/bin/mlir-translate -mlir-to-llvmir {{FILE}} > ${FILEBASE}.ll
     # creates {{FILE}}.s
     {{llvm_prefix}}/bin/llc -O0 ${FILEBASE}.ll
-    clang-14 -fuse-ld=lld -L{{build_dir}}/lib -lSigiRuntime ${FILEBASE}.s -g -o ${FILEBASE}.exe -no-pie
-
+    clang-14 -fuse-ld=lld -L{{build_dir}}/lib -Wl,--whole-archive -lSigiRuntime -Wl,--no-whole-archive ${FILEBASE}.s -g -o ${FILEBASE}.exe -no-pie
 # Lowers Sigi all the way to LLVM IR. Temporary files are left there.
 sigiToLlvmIr FILE:
     #!/bin/bash

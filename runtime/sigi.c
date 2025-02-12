@@ -146,9 +146,13 @@ void sigi_print_stack_top_ln(sigi_stack_t* stack)
     }
 }
 
-void sigi_print_i32(int32_t integer) { printf("%d\n", integer); }
+void sigi_builtin__pp_i32(int32_t integer)
+{
+    printf("DEBUG: sigi_builtin__pp_i32 called\n");
+    printf("%d\n", integer);
+}
 
-void sigi_print_i1(bool boolean)
+void sigi_builtin__pp_i1(bool boolean)
 {
     if (boolean)
         printf("true\n");
@@ -156,7 +160,7 @@ void sigi_print_i1(bool boolean)
         printf("false\n");
 }
 
-void sigi_print_closure(closure_t* closure)
+void sigi_builtin__pp_closure(closure_t* closure)
 {
     printf("(opaque closure, rc=%d)\n", closure->refcount);
 }
