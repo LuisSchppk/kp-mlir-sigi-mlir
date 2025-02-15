@@ -24,7 +24,7 @@ def StackEliminationPass : Pass<"stack-elimination",  "mlir::ModuleOp"> {
   // let constructor = "mlir::sigi::createDestackPass()";
 }
 
-def TypedBuiltInsPass : Pass<"typed-builtins", "func::FuncOp"> {
+def TypedBuiltInsPass : Pass<"typed-builtins", "mlir::ModuleOp"> {
   let summary = "Replaces builtins that take stack and use single value";
 }
 

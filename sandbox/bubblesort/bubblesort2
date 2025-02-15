@@ -1,0 +1,25 @@
+let while: 'S, ('S -> 'R, bool), ('R -> 'P) -> 'P =
+  -> evalCondition, body;
+  evalCondition apply -> conditionTrue;
+  body apply
+  if (conditionTrue) evalCondition body while
+  else pass
+;;
+
+let decr_and_check: int-> int, bool = 
+    -> size;
+    (size -1) (size > 0);;
+
+let show_second=
+    -> top, count;
+    top show
+    count;;
+
+let pack =
+ -> element, closure, size;
+    
+
+let print_stack: 'a, int -> int=
+    {decr_and_check} {show_second} while;;
+
+12

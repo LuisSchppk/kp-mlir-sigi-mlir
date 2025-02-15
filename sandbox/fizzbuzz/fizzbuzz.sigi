@@ -4,11 +4,17 @@ let fizzbuzz: int, int -> =
         if(n % 2 = 0)
             if(n % 5 = 0)
                 -3 show
+                (n + 1) upperbound fizzbuzz
             else
+                -1 show
+                (n + 1) upperbound fizzbuzz
+        else
+            if (n % 5 = 0)
                 -2 show
-        else 
-            n show
-            (n + 1) upperbound fizzbuzz
+                (n + 1) upperbound fizzbuzz
+            else
+                n show
+                (n + 1) upperbound fizzbuzz
     else 
         pass;;
 

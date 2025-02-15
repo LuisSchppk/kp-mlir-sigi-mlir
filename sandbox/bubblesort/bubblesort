@@ -1,0 +1,100 @@
+# let bubble_once: 'S, int, int, int -> 'R, int, int = 
+#     -> first, second, size;
+#     if(size > 0)
+#         if(first <= second)
+#             first (size - 1)
+#             bubble_once
+#             second
+#         else
+#             second (size - 1)
+#             bubble_once
+#             first
+#         else 
+#             if( first <= second)
+#                 first second
+#             else
+#                 second first
+#             pass;;
+
+# let bubble_sort: 'S, int -> 'R =
+#     -> size;
+#      if(size > 1)
+#          bubble_once
+#          -> top;
+#          (size - 1) 
+#          bubble_sort
+#          top
+#      else
+#          pass;;
+
+# 'a, int -> 'a
+# 'S, 'a, int -> 'P
+#  let walk_over_stack: 'S,'a -> 'R, 'a =
+#     -> top; 
+#     if (decr_and_check) 
+#         swap
+#         top
+#     else 
+#         top
+#     ;;
+
+let fib_tailrec: int -> int, int =
+  1 1 fib_tailrec_helper;;
+
+let fib_tailrec_helper: int, int, int -> int, int =
+  -> n, a, b;
+  n
+  if (n = 0)   a
+  elif (n = 1) b
+  else           (n - 1) b (a + b) fib_tailrec_helper
+  ;;
+
+let fib_body =
+  -> n, a, b;
+  n (n - 1) b (a + b) 
+  ;;
+
+let fib_head: int -> bool =
+  -> n;
+    if(n>2) true
+    elif(n = 0) false
+    else pop false
+  ;;
+ 
+
+let while: 'S, ('S -> 'R, bool), ('R -> 'P) -> 'P =
+  -> evalCondition, body;
+  evalCondition apply -> conditionTrue;
+  body apply
+  if (conditionTrue) evalCondition body while
+  else pass
+;;
+
+let show_second=
+    -> top, count;
+    top show
+    count;;
+
+let gt_zero: int-> int, bool = 
+    dup
+    > 0;;
+
+let decr_and_check: int-> int, bool = 
+    -> size;
+    (size -1) (size > 0);;
+
+let print_stack_and_pop: 'a, int -> int=
+    {decr_and_check} {show_second} while;;
+
+let walk: ('a ->) -> int -> int =
+    -> \f, n;
+    {decr_and_check} {
+         -> x, n;
+         f apply;
+         n
+    } while;;
+
+
+
+12  1 1  print_stack
+

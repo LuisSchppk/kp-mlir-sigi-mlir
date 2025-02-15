@@ -307,7 +307,7 @@ struct CreateSigiMain : public ConvertOpToLLVMPattern<LLVM::LLVMFuncOp> {
             auto newMainFunc = rewriter.create<LLVM::LLVMFuncOp>(
                 op->getLoc(),
                 "main",
-                LLVM::LLVMFunctionType::get(LLVM::LLVMVoidType::get(context), {}));
+                LLVM::LLVMFunctionType::get(rewriter.getI1Type(), {}));
             auto mainBody = rewriter.createBlock(&newMainFunc.getBody());
             rewriter.setInsertionPointToStart(mainBody);
 
@@ -373,7 +373,8 @@ struct CreateSigiMain : public ConvertOpToLLVMPattern<LLVM::LLVMFuncOp> {
                 }
             }
 
-            rewriter.create<LLVM::ReturnOp>(op.getLoc(), ValueRange{});
+            auto exitCode = rewriter.create<LLVM::ConstantOp>(op->getLoc(), rewriter.getI1Type(),0);
+            rewriter.create<LLVM::ReturnOp>(op.getLoc(), exitCode.getResult());
             rewriter.modifyOpInPlace(op, [&]() { op->removeAttr("sigi.main"); });
             return llvm::success();
         }
@@ -397,23 +398,16 @@ struct convertPrintFuncToFunc : public ConvertOpToLLVMPattern<LLVM::LLVMFuncOp> 
             rewriter.cancelOpModification(op);
             return llvm::failure();
         } else {
-            rewriter.setInsertionPoint(op);
-            auto printFunc = LLVM::lookupOrCreateFn(
-                op->getParentOfType<ModuleOp>(),
-                new_name,
-                op.getFunctionType().getParams(),
-                op.getFunctionType().getReturnType());
-            LLVM_DEBUG(llvm::errs() << "LINKAGE: " << printFunc.getLinkage() << "\n");
-            rewriter.replaceAllOpUsesWith(op, printFunc);
+            op.setName(new_name);
+            op->removeAttr("sigi.builtinfunc");
             rewriter.finalizeOpModification(op);
-            rewriter.eraseOp(op);
         }
         return success();
     }
 
     LogicalResult matchAndRewrite(
         LLVM::LLVMFuncOp op,
-        OpAdaptor adaptor,
+        OpAdaptor,
         ConversionPatternRewriter &rewriter) const override
     {
         if (op.isExternal() && op.getName() == "sigi::pp") {

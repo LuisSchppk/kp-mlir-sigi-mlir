@@ -7,9 +7,9 @@ declare void @sigi_init_stack(ptr)
 
 declare ptr @malloc(i64)
 
-declare ptr @sigi_builtin__pp(ptr)
-
 declare void @sigi_builtin__pp_i32(i32)
+
+declare ptr @sigi_builtin__pp(ptr)
 
 declare ptr @external(ptr)
 
@@ -39,9 +39,9 @@ define void @__main__() {
   ret void
 }
 
-define void @main() {
+define i1 @main() {
   call void @__main__()
-  ret void
+  ret i1 false
 }
 
 !llvm.module.flags = !{!0}

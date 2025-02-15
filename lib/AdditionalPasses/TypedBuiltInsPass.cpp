@@ -3,20 +3,27 @@
 #include "sigi-mlir/Dialect/Sigi/IR/SigiTypes.h"
 
 #include <cassert>
+#include <llvm/ADT/MapVector.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/LogicalResult.h>
 #include <llvm/Support/raw_ostream.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinOps.h>
+#include <mlir/IR/ImplicitLocOpBuilder.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/IR/SymbolTable.h>
+#include <mlir/IR/Types.h>
 #include <mlir/Pass/Pass.h>
+#include <mlir/Pass/PassManager.h>
+#include <mlir/Rewrite/FrozenRewritePatternSet.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 
 #define GEN_PASS_DEF_TYPEDBUILTINSPASS
+#define GEN_PASS_DEF_TYPEDBUILTINSINNERPASS
 namespace mlir::sigi {
 #include "sigi-mlir/Conversion/SigiPasses.h.inc"
 } // namespace mlir::sigi
@@ -44,7 +51,7 @@ struct TypedBuiltInsPass : public mlir::sigi::impl::TypedBuiltInsPassBase<TypedB
             Type printType,
             PatternRewriter &rewriter,
             ModuleOp moduleOp,
-            func::FuncOp& printFunc) const
+            func::FuncOp &printFunc) const
         {
             rewriter.setInsertionPointToStart(moduleOp.getBody());
             auto printFunctionType = FunctionType::get(moduleOp->getContext(), printType, {});
@@ -101,13 +108,6 @@ struct TypedBuiltInsPass : public mlir::sigi::impl::TypedBuiltInsPassBase<TypedB
             sigi::PushOp pushBefore;
             sigi::PopOp popAfter;
 
-            if (!callee) return llvm::failure();
-            if (!llvm::isa<func::FuncOp>(callee)) return llvm::failure();
-            if (!callee->hasAttr(sigi_builtin)) return llvm::failure();
-            if (callOp.getCallee() != "sigi::pp") return llvm::failure();
-            if (callOp.getNumOperands() != 1) return llvm::failure();
-            if (callOp.getNumResults() != 1) return llvm::failure();
-
             if ((pushBefore =
                      llvm::dyn_cast<sigi::PushOp>(callOp->getOperand(0).getDefiningOp()))) {
                 if (!pushBefore.getOutStack().hasOneUse()) return llvm::failure();
@@ -136,7 +136,8 @@ struct TypedBuiltInsPass : public mlir::sigi::impl::TypedBuiltInsPassBase<TypedB
 
             auto printType = stackFuncType.getResult(0);
             func::FuncOp printFunc;
-            if(getPrintFunction(callOp, printType, rewriter, moduleOp, printFunc).failed()) return llvm::failure();
+            if (getPrintFunction(callOp, printType, rewriter, moduleOp, printFunc).failed())
+                return llvm::failure();
             assert(printFunc && "printFunc not set -> Should have resulted in a failure earlier.");
             rewriter.setInsertionPointAfter(callOp);
             rewriter.create<func::CallOp>(callOp->getLoc(), printFunc, pushBefore.getValue());
@@ -154,13 +155,23 @@ struct TypedBuiltInsPass : public mlir::sigi::impl::TypedBuiltInsPassBase<TypedB
 
     void runOnOperation() override
     {
-
         RewritePatternSet patterns(&getContext());
         patterns.add<ReplacePP>(&getContext());
         SmallVector<Operation*> callOps;
-        getOperation()->walk(
-            [&](func::CallOp callOp) { callOps.push_back(callOp.getOperation()); });
-        (void)applyOpPatternsAndFold(callOps, std::move(patterns));
+        getOperation()->walk([&](func::CallOp callOp) {
+            Operation* callee = SymbolTable::lookupSymbolIn(getOperation(), callOp.getCalleeAttr());
+            if (!callee) return;
+            if (!llvm::isa<func::FuncOp>(callee)) return;
+            if (!callee->hasAttr(sigi_builtin)) return;
+            if (callOp.getCallee() != "sigi::pp") return;
+            if (callOp.getNumOperands() != 1) return;
+            if (callOp.getNumResults() != 1) return;
+
+            callOps.push_back(callOp.getOperation());
+        });
+        
+        FrozenRewritePatternSet frozen(std::move(patterns));
+        for (auto printCall : callOps) (void)applyOpPatternsAndFold({printCall}, frozen);
     }
 };
 } // namespace

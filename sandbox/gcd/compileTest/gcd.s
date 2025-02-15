@@ -65,7 +65,9 @@ main:                                   # @main
 	pushq	%rax
 	.cfi_def_cfa_offset 16
 	callq	__main__@PLT
-	popq	%rax
+	xorl	%eax, %eax
+                                        # kill: def $al killed $al killed $eax
+	popq	%rcx
 	.cfi_def_cfa_offset 8
 	retq
 .Lfunc_end2:

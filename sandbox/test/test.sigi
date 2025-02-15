@@ -1,0 +1,17 @@
+let square: int -> int =
+    -> top;
+    top top (*)
+    ;;
+
+let pow: int, int -> int =
+    1 pow_loop;;
+
+let pow_loop: int, int, int -> int =
+    -> base, exp, result;
+    if(exp = 1) // exp 1 if
+        result
+    else
+        result show
+        base (exp - 1) (base * result) pow_loop;; 
+
+2 6 pow show

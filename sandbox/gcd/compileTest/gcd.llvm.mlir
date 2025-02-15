@@ -2,8 +2,8 @@ module {
   llvm.func @sigi_free_stack(!llvm.ptr)
   llvm.func @sigi_init_stack(!llvm.ptr)
   llvm.func @malloc(i64) -> !llvm.ptr
-  llvm.func @sigi_builtin__pp(!llvm.ptr) -> !llvm.ptr
-  llvm.func @sigi_builtin__pp_i32(i32)
+  llvm.func @sigi_builtin__pp_i32(i32) attributes {sym_visibility = "private"}
+  llvm.func @sigi_builtin__pp(!llvm.ptr) -> !llvm.ptr attributes {sym_visibility = "private"}
   llvm.func @external(!llvm.ptr) -> !llvm.ptr attributes {sym_visibility = "private"}
   llvm.func @gcd(%arg0: i32, %arg1: i32) -> i32 attributes {sigi.stackType = (i32, i32) -> i32, sym_visibility = "private"} {
     %0 = llvm.mlir.constant(0 : i32) : i32
@@ -27,9 +27,10 @@ module {
     llvm.call @sigi_builtin__pp_i32(%2) : (i32) -> ()
     llvm.return
   }
-  llvm.func @main() {
+  llvm.func @main() -> i1 {
     llvm.call @__main__() : () -> ()
-    llvm.return
+    %0 = llvm.mlir.constant(false) : i1
+    llvm.return %0 : i1
   }
 }
 
