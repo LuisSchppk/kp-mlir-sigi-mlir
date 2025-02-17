@@ -8,6 +8,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "sigi-mlir/Conversion/SigiToLLVM/SigiToLLVM.h"
+#include "sigi-mlir/Dialect/Sigi/IR/SigiOps.h.inc"
 
 #include <memory>
 #include <mlir/Dialect/Func/IR/FuncOps.h>

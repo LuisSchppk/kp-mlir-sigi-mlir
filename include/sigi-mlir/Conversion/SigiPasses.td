@@ -28,4 +28,8 @@ def TypedBuiltInsPass : Pass<"typed-builtins", "mlir::ModuleOp"> {
   let summary = "Replaces builtins that take stack and use single value";
 }
 
+def ExtractPushFromIfPass : Pass<"extract-push-if", "func::FuncOp"> {
+  let summary = "";
+}
+
 #endif // SIGI_CONVERSION_PASSES

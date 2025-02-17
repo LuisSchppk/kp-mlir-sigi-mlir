@@ -148,7 +148,6 @@ void sigi_print_stack_top_ln(sigi_stack_t* stack)
 
 void sigi_builtin__pp_i32(int32_t integer)
 {
-    printf("DEBUG: sigi_builtin__pp_i32 called\n");
     printf("%d\n", integer);
 }
 

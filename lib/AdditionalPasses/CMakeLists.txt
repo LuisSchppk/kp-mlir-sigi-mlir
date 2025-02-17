@@ -4,6 +4,7 @@ add_mlir_dialect_library(AdditionalPasses
             StackElimination.cpp
             GlobalStackPass.cpp
             TypedBuiltInsPass.cpp
+            ExtractPushFromIfPass.cpp
             Utils.h
             Utils.cpp
 

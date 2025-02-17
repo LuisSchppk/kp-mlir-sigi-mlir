@@ -114,7 +114,7 @@ struct StackEliminationPass
             auto stackTypeAttr = llvm::cast<TypeAttr>(callOp->getAttr(stack_type_attr));
             auto stackFuncType = cast<FunctionType>(stackTypeAttr.getValue());
             SmallVector<Type> inputs{llvm::reverse(stackFuncType.getInputs())};
-            SmallVector<Type> outputs{llvm::reverse(stackFuncType.getResults())};
+            SmallVector<Type> outputs{stackFuncType.getResults()};
             func::FuncOp encompassingFunc = callOp->getParentOfType<func::FuncOp>();
 
             LLVM_DEBUG(llvm::errs() << "CALL SITE MATCH DONE\n");
@@ -155,33 +155,10 @@ struct StackEliminationPass
                 Value currentStack;
                 rewriter.setInsertionPointAfter(callOp);
 
-                // if (inStacks.empty()) {
-                //     /*
-                //      * In this case we have a function that takes no input stack, but still
-                //      returns
-                //      * a stack. So the stack has to be initalized within that function.
-                //      * e.g. Main
-                //      * So here we just get the global stack and push the results?
-                //      * ATTENTION: THIS SHOULD NEVER BE THE CASE IN SIGI: ONLY ONE STACK!!!
-                //      *          If parentFunc already contains a global stack -> we just reload
-                //      that
-                //      *          [lets hope that lowered to LLVM this works]
-                //      * If parentFunc has no global stack -> initialize
-                //      */
-                //     auto loadGlobalStackOp = rewriter.create<sigi::LoadGlobalStackOp>(
-                //         encompassingFunc->getLoc(),
-                //         sigi::StackType::get(encompassingFunc->getContext()));
-                //     currentStack = loadGlobalStackOp.getGlobalStack();
-                // } else {
-                //     assert(lastStack && "LAST STACK HAS TO BE SET IF THERE IS AN INPUT
-                //     STACK!\n"); currentStack = lastStack;
-                // }
-
                 SmallVector<Type> newResultType;
                 for (auto resultType : callOp->getResultTypes()) {
                     if (llvm::isa<sigi::StackType>(resultType))
-                        for (auto stackType : stackFuncType.getResults())
-                            newResultType.push_back(stackType);
+                        for (auto stackType : outputs) newResultType.push_back(stackType);
                     else
                         newResultType.push_back(resultType);
                 }
@@ -190,13 +167,15 @@ struct StackEliminationPass
                     encompassingFunc->getLoc(),
                     callOp.getCalleeAttr(),
                     newResultType,
-                    newOperands);
+                    SmallVector<Value>{llvm::reverse(newOperands)});
 
                 auto loadGlobalStackOp = rewriter.create<sigi::LoadGlobalStackOp>(
                     encompassingFunc->getLoc(),
                     sigi::StackType::get(encompassingFunc->getContext()));
                 currentStack = loadGlobalStackOp.getGlobalStack();
 
+                // -> i32 closure
+                // push i32 push closure
                 for (auto result : newCall->getResults()) {
                     auto resultPush = rewriter.create<sigi::PushOp>(
                         encompassingFunc->getLoc(),
@@ -308,8 +287,10 @@ struct StackEliminationPass
             auto stackFuncType = cast<FunctionType>(stackTypeAttr.getValue());
 
             // Stack -> reverts order
-            SmallVector<Type> inputs{llvm::reverse(stackFuncType.getInputs())};
+            // SmallVector<Type> inputs{llvm::reverse(stackFuncType.getInputs())};
+            SmallVector<Type> inputs{stackFuncType.getInputs()};
             SmallVector<Type> outputs{llvm::reverse(stackFuncType.getResults())};
+            // SmallVector<Type> outputs{stackFuncType.getResults()};
             DenseMap<Value, SmallVector<Operation*>> stackParameter;
             DenseMap<Value, SmallVector<Operation*>> stackResults;
             auto inStacks = getStackFrom(entryBlock->getArguments());
@@ -364,7 +345,7 @@ struct StackEliminationPass
                 SmallVector<Location> newInLocs;
                 for (auto oldIn : funcOp.getFunctionType().getInputs()) {
                     if (llvm::isa<sigi::StackType>(oldIn))
-                        for (auto newIn : stackFuncType.getInputs()) {
+                        for (auto newIn : inputs) {
                             newInLocs.push_back(funcOp->getLoc());
                             newInTypes.push_back(newIn);
                         }
@@ -377,13 +358,12 @@ struct StackEliminationPass
                 rewriter.setInsertionPointAfter(loadGlobalStackOp);
                 Value currentStack = loadGlobalStackOp.getResult();
                 entryBlock->addArguments(newInTypes, newInLocs);
-                for (int i = entryBlock->getNumArguments() - 1; i >= 0; i--) {
-                    auto arg = entryBlock->getArgument(i);
+                for (auto blockArg : entryBlock->getArguments()) {
                     auto paramPush = rewriter.create<sigi::PushOp>(
                         funcOp->getLoc(),
                         sigi::StackType::get(funcOp->getContext()),
                         currentStack,
-                        arg);
+                        blockArg);
                     currentStack = paramPush.getOutStack();
                 }
 
@@ -400,28 +380,29 @@ struct StackEliminationPass
             // pop closure
             // pop i1
             // pop i32
+            Value currentStack;
             if (outStack) {
                 rewriter.setInsertionPoint(returnOp);
-                Value currentStack = outStack;
+                currentStack = outStack;
                 SmallVector<Value> newResults;
-                for (auto results : outputs) {
+                for (auto resultType : outputs) {
                     auto resultPop = rewriter.create<sigi::PopOp>(
                         funcOp.getLoc(),
                         sigi::StackType::get(funcOp->getContext()),
-                        results,
+                        resultType,
                         currentStack);
                     currentStack = resultPop.getOutStack();
                     newResults.push_back(resultPop.getValue());
                 }
-                newResults = {llvm::reverse(newResults).begin(), llvm::reverse(newResults).end()};
-                auto newReturn = rewriter.create<func::ReturnOp>(funcOp->getLoc(), newResults);
+                auto newReturn = rewriter.create<func::ReturnOp>(funcOp->getLoc(), SmallVector<Value>{llvm::reverse(newResults)});
                 rewriter.replaceOp(returnOp, newReturn);
                 returnOp = newReturn;
             }
 
             if (outStack) {
+                assert(currentStack && "CurrentStack has to be set if outstack is set.");
                 rewriter.setInsertionPoint(returnOp);
-                rewriter.create<sigi::StoreGlobalStackOp>(funcOp->getLoc(), outStack);
+                rewriter.create<sigi::StoreGlobalStackOp>(funcOp->getLoc(), currentStack);
             } else {
                 SmallVector<Value> lastStackCandidates;
                 for (auto &operation : funcOp.getOps()) {
@@ -463,93 +444,12 @@ struct StackEliminationPass
             SmallVector<Type> newOutTypes{returnOp->getOperandTypes()};
             FunctionType newFunctionType =
                 FunctionType::get(funcOp->getContext(), newInTypes, newOutTypes);
+            LLVM_DEBUG(llvm::errs() << "NEW TYPE " << newFunctionType << "\n");
             rewriter.modifyOpInPlace(funcOp, [&]() { funcOp.setFunctionType(newFunctionType); });
 
             return llvm::success();
         }
     };
-
-    // struct InsertStoreGlobal : OpRewritePattern<func::FuncOp> {
-    //     using OpRewritePattern<func::FuncOp>::OpRewritePattern;
-
-    //     LogicalResult matchAndRewrite(func::FuncOp funcOp, PatternRewriter &rewriter) const
-    //     override
-    //     {
-    //         return llvm::failure();
-    //         bool containsGlobalOp = false;
-    //         LLVM_DEBUG(
-    //             llvm::errs()
-    //             << "ENTERED INSERT GLOBAL STORE OP ON " << funcOp.getSymName() << "\n");
-    //         Operation* opLoadGlobal;
-    //         funcOp->walk([&](sigi::LoadGlobalStackOp loadGlobal) {
-    //             if (!containsGlobalOp) {
-    //                 containsGlobalOp = true;
-    //                 opLoadGlobal = loadGlobal.getOperation();
-    //             } else {
-    //                 LLVM_DEBUG(
-    //                     llvm::errs() << "ENCOUNTERED MULTIPLE LOAD GLOBAL STACK OPS IN ONE
-    //                     FUNC!");
-    //                 opLoadGlobal = nullptr;
-    //             }
-    //         });
-
-    //         if (!containsGlobalOp) return llvm::failure();
-    //         assert(
-    //             opLoadGlobal
-    //             && "FuncOp contained multiple LoadGlobalStackOp. That should never be the
-    //             case.\n");
-
-    //         LLVM_DEBUG(llvm::errs() << "InsertStoreGlobal MATCH DONE\n");
-    //         sigi::LoadGlobalStackOp loadGlobal = cast<sigi::LoadGlobalStackOp>(opLoadGlobal);
-
-    //         // SmallVector<Value> defined_stacks = {loadGlobal.getGlobalStack()};
-    //         SmallVector<Value> danglingStacks;
-
-    //         funcOp->walk([&](Operation* operation) {
-    //             if (llvm::is_contained(
-    //                     operation->getResultTypes(),
-    //                     sigi::StackType::get(funcOp->getContext()))) {
-    //                 auto stackResults = getStackFrom(operation->getResults());
-    //                 for (auto stack : stackResults) {
-    //                     if(stack.use_empty()) {
-    //                         danglingStacks.push_back(stack);
-    //                     }
-    //                 }
-    //             }
-    //         });
-
-    //         // while (!defined_stacks.empty()) {
-    //         //     Value global_stack = defined_stacks.pop_back_val();
-    //         //     LLVM_DEBUG(llvm::errs() << "[GLOBAL STACK] " << global_stack << "\n");
-    //         //     if (global_stack.use_empty()) {
-    //         //         LLVM_DEBUG(llvm::errs() << "   HAS NO USES \n");
-    //         //         lastStacks.push_back(global_stack);
-    //         //     } else {
-    //         //         for (auto &uses : global_stack.getUses()) {
-    //         //             auto* usingOp = uses.getOwner();
-    //         //             LLVM_DEBUG(llvm::errs() << "   HAS USE: " << usingOp->getName() <<
-    //         "\n");
-
-    //         //             if(usingOp.)
-    //         //             auto stackResults = getStackFrom(usingOp->getResults());
-    //         //             for (auto stack : stackResults) {
-    //         //                 LLVM_DEBUG(llvm::errs() << "      RESULT: " << stack << "\n");
-    //         //                 defined_stacks.push_back(stack);
-    //         //             }
-    //         //         }
-    //         //     }
-    //         // }
-
-    //         LLVM_DEBUG(llvm::errs() << "# last stacks: " << danglingStacks.size() << "\n");
-    //         for (auto stack : danglingStacks) {
-    //             rewriter.setInsertionPointAfter(stack.getDefiningOp());
-    //             assert(stack.use_empty() && "TRYING TO STORE STACK STILL IN USE!");
-    //             rewriter.create<sigi::StoreGlobalStackOp>(funcOp.getLoc(), stack);
-    //         }
-
-    //         return llvm::success();
-    //     }
-    // };
 
     void runOnOperation() override
     {

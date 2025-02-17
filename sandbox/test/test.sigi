@@ -1,17 +1,44 @@
+let while: 'S, ('S -> 'R, bool), ('R -> 'P) -> 'P =
+  -> evalCondition, body;
+  evalCondition apply -> conditionTrue;
+  body apply
+  if (conditionTrue) evalCondition body while
+  else pass
+;;
+
+let show_second=
+    -> top, count;
+    top show
+    count;;
+
+let decr_and_check: int-> int, bool = 
+    -> size;
+    (size -1) (size > 0);;
+
+let print_stack_and_pop: 'a, int -> int=
+    {decr_and_check} {show_second} while;;
+
 let square: int -> int =
     -> top;
-    top top (*)
+    top top (*) 
     ;;
 
-let pow: int, int -> int =
+let pow: int, int -> int, bool = 
     1 pow_loop;;
 
-let pow_loop: int, int, int -> int =
+let pow_loop: int, int, int -> int, bool =
     -> base, exp, result;
-    if(exp = 1) // exp 1 if
-        result
+    if(exp <= 0) // exp 1 if
+        result true
     else
         result show
         base (exp - 1) (base * result) pow_loop;; 
+let even: int -> int, bool = 
+    -> n;
+    n
+    if (n % 2 = 0) 
+        true
+    else
+        false;; 
 
-2 6 pow show
+2 6 pow show show

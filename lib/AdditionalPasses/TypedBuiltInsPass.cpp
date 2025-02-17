@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <llvm/ADT/MapVector.h>
+#include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/Debug.h>
@@ -102,11 +103,33 @@ struct TypedBuiltInsPass : public mlir::sigi::impl::TypedBuiltInsPassBase<TypedB
 
         LogicalResult matchAndRewrite(func::CallOp callOp, PatternRewriter &rewriter) const override
         {
-            LLVM_DEBUG(llvm::errs() << "ENTERED REWRITE ON " << callOp.getCallee() << "\n");
+            LLVM_DEBUG(
+                llvm::errs()
+                << "ENTERED REWRITE ON " << callOp << " FOR " << callOp.getCallee() << "\n");
             ModuleOp moduleOp = callOp->getParentOfType<ModuleOp>();
             Operation* callee = SymbolTable::lookupSymbolIn(moduleOp, callOp.getCalleeAttr());
+
+            if (!callee) return llvm::failure();
+            if (auto funcOp = llvm::dyn_cast<func::FuncOp>(callee)) {
+                if (!funcOp.isExternal()) return llvm::failure();
+            } else {
+                return llvm::failure();
+            }
+
+            if (!llvm::is_contained(
+                    callOp.getOperandTypes(),
+                    sigi::StackType::get(callOp->getContext())))
+                return llvm::failure();
+
             sigi::PushOp pushBefore;
             sigi::PopOp popAfter;
+
+            if (!callOp->getOperand(0).getDefiningOp()) {
+                LLVM_DEBUG(
+                    llvm::errs() << "FOR: " << callOp << " " << callOp->getOperand(0)
+                                 << "HAS NO DEFINING OP!\n");
+                return llvm::failure();
+            }
 
             if ((pushBefore =
                      llvm::dyn_cast<sigi::PushOp>(callOp->getOperand(0).getDefiningOp()))) {
@@ -157,6 +180,8 @@ struct TypedBuiltInsPass : public mlir::sigi::impl::TypedBuiltInsPassBase<TypedB
     {
         RewritePatternSet patterns(&getContext());
         patterns.add<ReplacePP>(&getContext());
+        GreedyRewriteConfig greedyConf;
+        greedyConf.strictMode = GreedyRewriteStrictness::ExistingOps;
         SmallVector<Operation*> callOps;
         getOperation()->walk([&](func::CallOp callOp) {
             Operation* callee = SymbolTable::lookupSymbolIn(getOperation(), callOp.getCalleeAttr());
@@ -166,12 +191,15 @@ struct TypedBuiltInsPass : public mlir::sigi::impl::TypedBuiltInsPassBase<TypedB
             if (callOp.getCallee() != "sigi::pp") return;
             if (callOp.getNumOperands() != 1) return;
             if (callOp.getNumResults() != 1) return;
+            
 
+            LLVM_DEBUG(llvm::errs() << "REGISTER " << callOp << "\n");
             callOps.push_back(callOp.getOperation());
         });
-        
+
         FrozenRewritePatternSet frozen(std::move(patterns));
-        for (auto printCall : callOps) (void)applyOpPatternsAndFold({printCall}, frozen);
+        for (auto printCall : callOps) (void)applyOpPatternsAndFold({printCall}, frozen, greedyConf);
+        callOps.clear();
     }
 };
 } // namespace
